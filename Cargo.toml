@@ -25,7 +25,8 @@ croner = "3.0.1"
 sparko-embedded-std = { path = "../sparko-embedded-std"}
 
 [features]
-default = ["espidf", "board-xiao-esp32c6"]
+default = ["espidf"]
+#default = ["espidf", "board-xiao-esp32c6"]
 #espidf = ["esp-idf-svc", "embassy-time", "embedded-svc", "esp-idf-hal", "esp-idf-sys", "futures", "embuild"]
 espidf = [
   "esp-idf-svc",
