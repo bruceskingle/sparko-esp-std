@@ -3,7 +3,9 @@ ESP32 Implementation of Sparko Embedded Std
 ## Introduction
 The idea of Sparko Embedded is to provide a platform for embedded applications for hardware such as ESP32 SoC boards. Sparko Embedded Std is a version of this platform which includes the standard Rust library which means that the heap and standard collections like ```Vec``` are all available for use. This crate contains code for that platform running on ESP32 based boards.
 
-Example applications for various boards are available at sparko-embedded-examples.
+Example applications for various boards are available at [sparko-embedded-examples](https://github.com/bruceskingle/sparko-embedded-example) on GitHub.
+
+This crate depends upon [sparko-embedded-std](https://github.com/bruceskingle/sparko-embedded-std) which contains hardware agnostic components of the platform.
 
 ## Features
 This crate uses multiple features to support various different ESP32 boards. There are functional features like ```mono-led``` and ```rgb-led``` which are referenced in the code and which get activated by board level features like ```board-cyd``` and ```board-xaio-esp32c6```. Client crates should normally select exactly one board feature and no others.
@@ -22,7 +24,7 @@ development board has become known in the maker community as the “Cheap Yellow
 - 2.8-inch TFT touchscreen LCD
 - microSD card interface
 - RGB LED
-- built-in LDR (light-dependent resistor)
+- built-in LDR (light-dependent resistor)      d
 - all the required circuitry to program and apply power to the board.
 
 Useful board information can be found at [Random Nerd Tutorials](https://randomnerdtutorials.com/?s=CYD)
