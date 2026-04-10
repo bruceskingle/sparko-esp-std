@@ -8,6 +8,8 @@ use esp_idf_svc::wifi::EspWifi;
 use esp_idf_svc::wifi::ScanMethod;
 use esp_idf_svc::wifi::ScanSortMethod;
 use esp_idf_svc::wifi::WifiEvent;
+use sparko_embedded_std::problem::Problem;
+use sparko_embedded_std::problem::ProblemManager;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -25,7 +27,7 @@ pub struct WiFiManager<'a> {
     wifi: EspWifi<'a>,
     sys_loop: EspSystemEventLoop,
     wifi_sub: Arc<Mutex<Option<esp_idf_svc::eventloop::EspSubscription<'a, esp_idf_svc::eventloop::System>>>>,
-    failure_reason: Arc<Mutex<Option<String>>>,
+    problem: Arc<Problem>,
 }
 
 impl WiFiManager<'_> {
@@ -33,7 +35,7 @@ impl WiFiManager<'_> {
         modem: impl WifiModemPeripheral + 'static,
         sys_loop: EspSystemEventLoop,
         nvs: EspNvsPartition<NvsDefault>,
-        failure_reason: Arc<Mutex<Option<String>>>,
+        problem_manager: &Arc<ProblemManager>,
     ) -> anyhow::Result<Self> {
         let esp_wifi = EspWifi::new(modem, sys_loop.clone(), Some(nvs))?;
 
@@ -41,7 +43,7 @@ impl WiFiManager<'_> {
             wifi: esp_wifi,
             sys_loop,
             wifi_sub: Arc::new(Mutex::new(None)),
-            failure_reason,
+            problem: Problem::new(problem_manager),
         })
     }
 
@@ -159,7 +161,7 @@ impl WiFiManager<'_> {
         self.wifi.set_configuration(&wifi_configuration)?;
 
 
-        let failure_reason_clone = self.failure_reason.clone();
+        let problem = self.problem.clone();
 
         let wifi_sub: esp_idf_svc::eventloop::EspSubscription<'_, esp_idf_svc::eventloop::System> = self.sys_loop.subscribe::<WifiEvent, _>(move |event: WifiEvent| {
             match event {
@@ -173,19 +175,19 @@ impl WiFiManager<'_> {
                     match sta_disconnected_ref.reason() as u32{
                         esp_idf_sys::wifi_err_reason_t_WIFI_REASON_AUTH_FAIL => {
                             info!("WiFi Station Authentication Failed");
-                            failure_reason_clone.lock().unwrap().replace("WiFi authentication failed. Please check your password.".to_string());
+                            problem.set("WiFi authentication failed. Please check your password.");
                         },
                         esp_idf_sys::wifi_err_reason_t_WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT => {
                             info!("WiFi Station 4-Way Handshake Timeout");
-                            failure_reason_clone.lock().unwrap().replace("WiFi 4-way handshake timeout. Please check your password.".to_string());
+                            problem.set("WiFi 4-way handshake timeout. Please check your password.");
                         },
                         esp_idf_sys::wifi_err_reason_t_WIFI_REASON_HANDSHAKE_TIMEOUT => {
                             info!("WiFi Station Handshake Timeout");
-                            failure_reason_clone.lock().unwrap().replace("WiFi handshake timeout. Please check your password".to_string());
+                            problem.set("WiFi handshake timeout. Please check your password");
                         },
                         esp_idf_sys::wifi_err_reason_t_WIFI_REASON_NO_AP_FOUND => {
                             info!("WiFi Station No AP Found");
-                            failure_reason_clone.lock().unwrap().replace("WiFi no access point found. Please check your network settings and try again.".to_string());
+                            problem.set("WiFi no access point found. Please check your network settings and try again.");
                         },
                         _ => {}
                     }
@@ -230,7 +232,7 @@ impl WiFiManager<'_> {
         info!("Wifi started");
 
         let mut retry_cnt = 4;
-        while self.failure_reason.lock().unwrap().is_none() && retry_cnt > 0 {
+        while self.problem.is_clear() && retry_cnt > 0 {
             match self.wifi.connect() {
                 Ok(_) => {
                     info!("Wifi connected");
@@ -254,9 +256,9 @@ impl WiFiManager<'_> {
         let ip_info;
         // while self.failure_reason.lock().unwrap().is_none() {
         loop {
-            if let Some(reason) = self.failure_reason.lock().unwrap().clone() {
-                log::error!("WiFi connection failed: {}", reason);
-                return Err(anyhow::anyhow!(reason));
+            if self.problem.is_set() {
+                log::error!("WiFi connection failed: {}", self.problem);
+                return Err(anyhow::anyhow!(self.problem.to_string()));
             }
 
             if let Ok(info) = self.wifi.sta_netif().get_ip_info() {

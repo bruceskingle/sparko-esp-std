@@ -18,15 +18,17 @@ use crate::sparko_esp32_std::SparkoEsp32Std;
 use crate::sparko_esp32_std::SparkoEsp32StdInitializer;
 use crate::{Feature, FeatureDescriptor};
 
-pub const USER_NAME: &str = "user_name";
-pub const PASSWORD: &str = "password";
-pub const HOSTNAME: &str = "hostname";
-pub const BASE_SERVICE_URL: &str = "base_url";
-pub const GET_IP_URL: &str = "get_ip_url";
-pub const GET_REQUIRES_STRIP: &str = "get_req_strip";
-pub const UPDATE_URL: &str = "update_url";
-pub const UPDATE_REQUIRES_ADDRESS: &str = "upd_req_addr";
-pub const UPDATE_INTERVAL: &str = "upd_int";
+//                                           123456789012345<-------- Max Name Length 15
+pub const USER_NAME: &str =                 "user_name";
+pub const PASSWORD: &str =                  "password";
+pub const HOSTNAME: &str =                  "hostname";
+pub const BASE_SERVICE_URL: &str =          "base_url";
+pub const GET_IP_URL: &str =                "get_ip_url";
+pub const GET_REQUIRES_STRIP: &str =        "get_req_strip";
+pub const UPDATE_URL: &str =                "update_url";
+pub const UPDATE_REQUIRES_ADDRESS: &str =   "upd_req_addr";
+pub const UPDATE_INTERVAL: &str =           "upd_int";
+pub const SCHEDULE: &str =                  "schedule";
 
 // pub struct DynDns2Config {
 //     user_name: String,
@@ -71,16 +73,20 @@ impl DynDns2 {
 
 impl Feature for DynDns2 {
     fn init(&self, initializer: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
+        info!("DynDns2::init()");
         let config = Config::builder()
-            .with(USER_NAME.to_string(), ConfigValue { value: TypedValue::String(32, None), required: true })?
-            .with(PASSWORD.to_string(), ConfigValue { value: TypedValue::String(32, None), required: true })?
-            .with(HOSTNAME.to_string(), ConfigValue { value: TypedValue::String(32, None), required: true })?
-            .with(BASE_SERVICE_URL.to_string(), ConfigValue { value: TypedValue::String(32, None), required: true })?
-            .with(GET_IP_URL.to_string(), ConfigValue { value: TypedValue::String(32, None), required: true })?
-            .with(GET_REQUIRES_STRIP.to_string(), ConfigValue { value: TypedValue::Bool(false), required: true })?
-            .with(UPDATE_URL.to_string(), ConfigValue { value: TypedValue::String(32, None), required: true })?
-            .with(UPDATE_REQUIRES_ADDRESS.to_string(), ConfigValue { value: TypedValue::Bool(false), required: false })?
-            .with(UPDATE_INTERVAL.to_string(), ConfigValue { value: TypedValue::Int64(Some(3600)), required: true })?
+            .with(USER_NAME.to_string(), ConfigValue::new(TypedValue::String(32, None), true))?
+            .with(PASSWORD.to_string(), ConfigValue::new(TypedValue::String(32, None), true))?
+            .with(HOSTNAME.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
+            // .with(BASE_SERVICE_URL.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
+            .with(GET_IP_URL.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
+            // .with(GET_REQUIRES_STRIP.to_string(), ConfigValue::new(TypedValue::Bool(false), false))?
+            .with(UPDATE_URL.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
+            .with(UPDATE_REQUIRES_ADDRESS.to_string(), ConfigValue::new(TypedValue::Bool(false), false ))?
+            .with(SCHEDULE.to_string(), ConfigValue::new(TypedValue::Cron(None), true))?
+            // .with(UPDATE_INTERVAL.to_string(), ConfigValue::new(TypedValue::Int64(Some(3600)), true))?
+            // .with("an_infeasibly_long_name_which_wont_work".to_string(), ConfigValue::new(TypedValue::String(32, None), true))?
+            // .with("test".to_string(), ConfigValue::new(TypedValue::String(42, None), true))?
             .build();
         
 
@@ -97,7 +103,8 @@ impl Feature for DynDns2 {
     
     fn start(&self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &SharedConfig) -> anyhow::Result<()> {
         let resolve_task = ResolveTask::new(config)?;
-        initializer.add_task(Box::new(resolve_task), "0 * * * * *")?;
+        let schedule = config.get_valid(SCHEDULE)?;
+        initializer.add_task(Box::new(resolve_task), &schedule)?;
         Ok(())
     }
 
@@ -105,30 +112,18 @@ impl Feature for DynDns2 {
 
 pub struct ResolveTask {
     host_name: String,
+    user_name: String,
+    password: String,
+    get_ip_url: String,
+    update_url: String,
     addr: Arc<Mutex<IpAddr>>,
     cnt: u32,
+    http_client: embedded_svc::http::client::Client<EspHttpConnection>,
 }
 
 impl Task for ResolveTask {
     fn run(&mut self, _sparko_cyd: &dyn SparkoEmbeddedStd) -> anyhow::Result<()> {
-        
-        if self.cnt < 3 {
-            match Self::get_public_ip_address() {
-                Ok(public_ip) => {
-                    self.cnt = self.cnt + 1;
-                    if public_ip != *self.addr.clone().lock().unwrap() {
-                        log::info!("Public IP changed: {} -> {}", *self.addr.lock().unwrap(), public_ip);
-                        // *self.addr.lock()? = public_ip;
-                    } else {
-                        log::info!("Public IP unchanged: {}", public_ip);
-                    }
-                },
-                Err(e) => {
-                    log::error!("Failed to get public IP address: {}", e);
-                }
-            }
-        }
-        Ok(())
+        self.execute()
     }
     
     fn name(&self) -> &str {
@@ -140,15 +135,59 @@ impl ResolveTask {
     pub fn new(config: &SharedConfig) -> anyhow::Result<Self> {
         log::info!("Trace 3");
         let host_name = config.get_valid(HOSTNAME)?;
+        let user_name = config.get_valid(USER_NAME)?;
+        let password = config.get_valid(PASSWORD)?;
+        let update_url = config.get_valid(UPDATE_URL)?;
+        let get_ip_url = config.get_valid(GET_IP_URL)?;
+
+        let http_client = embedded_svc::http::client::Client::wrap(EspHttpConnection::new(&esp_idf_svc::http::client::Configuration {
+            // use_global_ca_store: true,
+            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+            ..Default::default()
+        })?);
+
         let current_dns = Self::resolve_single(&host_name)?;
         info!("Current DNS resolution for {}: {}", &host_name, current_dns);
 
         let addr = Arc::new(Mutex::new(current_dns));
-        Ok(Self { 
-            host_name: host_name.to_string(),
+
+        let mut task = Self { 
+            host_name,
+            user_name,
+            password,
+            get_ip_url,
+            update_url,
             addr,
             cnt: 0,
-        })
+            http_client,
+        };
+
+        task.execute();
+
+        Ok(task)
+    }
+
+    fn execute(&mut self) -> anyhow::Result<()> {
+        match self.get_public_ip_address() {
+                Ok(public_ip) => {
+                    self.cnt = self.cnt + 1;
+                    if public_ip != *self.addr.clone().lock().unwrap() {
+                        log::info!("Public IP changed: {} -> {}", *self.addr.lock().unwrap(), public_ip);
+                        // *self.addr.lock()? = public_ip;
+                        let url = format!("{}?username={}&password={}&hostname={}",
+                            self.update_url, self.user_name, self.password, self.host_name);
+                        
+                        self.get_ignore_response_body(&url)?;
+                    } else {
+                        log::info!("Public IP unchanged: {}", public_ip);
+                    }
+                },
+                Err(e) => {
+                    log::error!("Failed to get public IP address: {}", e);
+                }
+            }
+
+        Ok(())
     }
 
     fn resolve_single(name: &str) -> anyhow::Result<IpAddr> {
@@ -160,20 +199,13 @@ impl ResolveTask {
         Ok(addr.ip())
     }
 
-    fn get_public_ip_address() -> anyhow::Result<IpAddr> {
+    fn get_public_ip_address(&mut self) -> anyhow::Result<IpAddr> {
         // HTTP client
         // let connection = EspHttpConnection::new(&esp_idf_svc::http::client::Configuration::default())?;
         // let mut client = embedded_svc::http::client::Client::wrap(connection);
 
-        let mut client = embedded_svc::http::client::Client::wrap(EspHttpConnection::new(&esp_idf_svc::http::client::Configuration {
-            // use_global_ca_store: true,
-            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
-            ..Default::default()
-        })?);
-
-        let url = "https://svc.joker.com/nic/myip";
-
-        let request = client.request(Method::Get, url, &[])?;
+        
+        let request = self.http_client.request(Method::Get, &self.get_ip_url, &[])?;
         let mut response = request.submit()?;
 
         println!("Status: {}", response.status());
@@ -181,17 +213,59 @@ impl ResolveTask {
         let mut body = [0u8; 512];
         let bytes_read = response.read(&mut body)?;
 
-        let addr_str = core::str::from_utf8(&body[..bytes_read]).unwrap_or("invalid utf8").trim();
+        let html = core::str::from_utf8(&body[..bytes_read]).unwrap_or("invalid utf8").trim();
+
+        let start = html.find("<body>")
+            .map(|i| i + "<body>".len())
+            .unwrap_or(0);
+
+        let end = html[start..]
+            .find("</body>")
+            .map(|i| start + i)
+            .unwrap_or(html.len());
+
+        let raw_addr_str = &html[start..end];
+
+        // remove anything up to and including the final space
+        let addr_str = match raw_addr_str.rfind(' ') {
+            Some(idx) => &raw_addr_str[idx + 1..],
+            None => raw_addr_str,
+        };
+
+        info!("get IP result raw={} truncated={}", raw_addr_str, addr_str);
+
         let addr: IpAddr = IpAddr::from_str(addr_str)?;
+
+        // println!(
+        //     "Body: {}",
+        //     addr_str
+        // );
+        // println!(
+        //     "IP Address: {}",
+        //     addr
+        // );
+        Ok(addr)
+    }
+
+    fn get_ignore_response_body(&mut self, url: &str) -> anyhow::Result<()> {
+        let request = self.http_client.request(Method::Get, url, &[])?;
+        let mut response = request.submit()?;
+
+        println!("Status: {}", response.status());
+
+        let mut body = [0u8; 512];
+        let bytes_read = response.read(&mut body)?;
+
+        let response = core::str::from_utf8(&body[..bytes_read]).unwrap_or("invalid utf8").trim();
 
         println!(
             "Body: {}",
-            addr_str
+            response
         );
-        println!(
-            "IP Address: {}",
-            addr
-        );
-        Ok(addr)
+        // println!(
+        //     "IP Address: {}",
+        //     addr
+        // );
+        Ok(())
     }
 }

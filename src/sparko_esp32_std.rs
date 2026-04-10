@@ -5,7 +5,7 @@ use esp_idf_hal::{gpio::PinDriver, ledc::LedcDriver};
 use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method, client::EspHttpConnection, server::EspHttpServer}, nvs::{EspDefaultNvsPartition, EspNvs}, timer::EspTaskTimerService};
 use indexmap::IndexMap;
 use log::{error, info};
-use sparko_embedded_std::{SparkoEmbeddedStd, task::{Task, TaskManager, TaskManagerBuilder}};
+use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
 use std::str::FromStr;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
@@ -103,7 +103,8 @@ impl SparkoEsp32StdInitializer {
 
 pub struct SparkoEsp32StdBuilder {
     nvs_partition: esp_idf_svc::nvs::EspNvsPartition<esp_idf_svc::nvs::NvsDefault>,
-    failure_reason: Arc<Mutex<Option<String>>>,
+    // failure_reason: Arc<Mutex<Option<String>>>,
+    problem_manager: Arc<ProblemManager>,
     ap_mode: Arc<Mutex<bool>>,
     config_manager_builder: ConfigManagerBuilder,
     features: Vec::<FeatureHolder>,
@@ -120,17 +121,21 @@ impl SparkoEsp32StdBuilder {
         esp_idf_svc::log::EspLogger::initialize_default();
 
         let nvs_partition: esp_idf_svc::nvs::EspNvsPartition<esp_idf_svc::nvs::NvsDefault> = EspDefaultNvsPartition::take()?;
-        let failure_reason: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        // let failure_reason: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let problem_manager = ProblemManager::new();
         let ap_mode = Arc::new(Mutex::new(false));
 
         list_nvs_keys();
 
+        let config_manager_builder =  ConfigManager::builder(nvs_partition.clone(), problem_manager.clone(), ap_mode.clone())?;
+
         let mut builder = Self {
+            nvs_partition,
+            // failure_reason,
+            problem_manager,
             features: Vec::new(),
             initializer: SparkoEsp32StdInitializer::new(),
-            config_manager_builder: ConfigManager::builder(nvs_partition.clone(), failure_reason.clone(), ap_mode.clone())?,
-            nvs_partition,
-            failure_reason,
+            config_manager_builder,
             ap_mode,
         };
 
@@ -141,7 +146,7 @@ impl SparkoEsp32StdBuilder {
     }
 
     pub fn with_feature(mut self, feature: Box<dyn Feature>) -> anyhow::Result<Self> {
-        self.internal_add_feature(feature, false);
+        self.internal_add_feature(feature, false)?;
         Ok(self)
     }
 
@@ -210,7 +215,7 @@ impl SparkoEsp32StdBuilder {
 
 
         let wifi_manager = //wifi::wifi(peripherals.modem, sys_loop,Some(nvs_partition.clone()),timer_service)?;
-            WiFiManager::new(peripherals.modem, sys_loop, self.nvs_partition.clone(), self.failure_reason.clone())?;
+            WiFiManager::new(peripherals.modem, sys_loop, self.nvs_partition.clone(), &self.problem_manager)?;
 
         // let led_red_pin = PinDriver::output(peripherals.pins.gpio4)?;
         // let led_green_pin = PinDriver::output(peripherals.pins.gpio16)?;
@@ -487,12 +492,12 @@ impl SparkoEsp32Std {
             info!("Invalid config, starting AP mode");
         }
 
-        if let Some(reason) = self.config_manager.failure_reason.lock().unwrap().as_ref() {
-                info!("APMODE Failure reason present, showing error message on config page: {}", reason);
-            }
-            else {
-                info!("APMODE No failure reason, not showing error message on config page");
-            }
+        // if let Some(reason) = self.config_manager.failure_reason.lock().unwrap().as_ref() {
+        //         info!("APMODE Failure reason present, showing error message on config page: {}", reason);
+        //     }
+        //     else {
+        //         info!("APMODE No failure reason, not showing error message on config page");
+        //     }
 
         *self.ap_mode.lock().unwrap() = true;
         

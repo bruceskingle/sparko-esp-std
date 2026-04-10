@@ -29,10 +29,10 @@ impl Core {
 impl Feature for Core {
     fn init(&self, init: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
         let config = Config::builder()
-            .with(SSID.to_string(), ConfigValue { value: TypedValue::String(SSID_LEN, None), required: true })?
-            .with(WIFI_PASSWORD.to_string(), ConfigValue { value: TypedValue::String(PASSWORD_LEN, None), required: true })?
-            .with(MDNS_HOSTNAME.to_string(), ConfigValue { value: TypedValue::String(HOSTNAME_LEN, None), required: true })?
-            .with(TIMEZONE.to_string(), ConfigValue { value: TypedValue::TimeZone(TimeZone::Utc), required: true })?
+            .with(SSID.to_string(), ConfigValue::new(TypedValue::String(SSID_LEN, None), true))?
+            .with(WIFI_PASSWORD.to_string(), ConfigValue::new(TypedValue::String(PASSWORD_LEN, None), true))?
+            .with(MDNS_HOSTNAME.to_string(), ConfigValue::new(TypedValue::String(HOSTNAME_LEN, None), true))?
+            .with(TIMEZONE.to_string(), ConfigValue::new(TypedValue::TimeZone(TimeZone::Utc), true))?
             .build();
 
 

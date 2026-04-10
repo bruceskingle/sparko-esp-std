@@ -3,9 +3,10 @@ use esp_idf_svc::http::server::EspHttpConnection;
 
 use indexmap::IndexMap;
 use log::info;
-use sparko_embedded_std::{config::{Config, EnabledState, TypedValue}, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::{config::{Config, ConfigValue, EnabledState, TypedValue}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
 use url::form_urlencoded;
-use crate::{core::{CORE_FEATURE_NAME, TIMEZONE}};
+use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}};
+use crate::config_store::ConfigStore;
 use std::{sync::{Arc, Mutex}};
 
 use anyhow::anyhow;
@@ -46,55 +47,91 @@ pub struct FeatureConfig {
     pub name: String,
     pub enabled: EnabledState,
     pub config: Config,
-    nvs_namespace: EspNvs<NvsDefault>,
+    // nvs_namespace: EspNvs<NvsDefault>,
+    // problem_manager: Arc<ProblemManager>,
+    config_store: EspConfigStore,
 }
 
 impl FeatureConfig {
-    fn read_typed_value_from_nvs(typed_value: &TypedValue, nvs: &EspNvs<NvsDefault>, name: &str) -> TypedValue {
-        info!("Reading config value {} from NVS", name);
-        let result = match typed_value {
-            TypedValue::String(len, _) => {
-                let mut buf = vec![0u8; *len as usize];
+    // fn unwrap_and_log<T>(&self, name: &str, result: Result<Option<T>, esp_idf_sys::EspError>, problem_id: ProblemId) -> Option<T> {
+    //             match result {
+    //                 Ok(opt_str) => {
+    //                     opt_str
+    //                 },
+    //                 Err(error) => {
+    //                     let err = format!("NVS error reading {}: {}", name, error);
+    //                     log::error!("{}", &err);
+    //                     self.problem_manager.set(problem_id, err);
+    //                     None
+    //                 },
+    //             }
+    // }
 
-                // let x = nvs.get_str(name, buf.as_mut_slice());
-                // match x {
-                //     Ok(str) => log::info!("Read string value for {} from NVS: {:?}", name, str),
-                //     Err(e) => log::info!("No string value for {} in NVS: {:?}", name, e),
-                // }
+    // fn read_typed_value_from_nvs(&self, nvs: &EspNvs<NvsDefault>, name: &str, config_value: &mut ConfigValue) -> anyhow::Result<TypedValue> {
+    //     let typed_value: &TypedValue = &config_value.value;
+    //     info!("Reading config value {} from NVS", name);
+    //     let result = match typed_value {
+    //         TypedValue::String(len, _) => {
+    //             let mut buf = vec![0u8; (*len as usize)+1];
 
-                if let Some(str)= nvs.get_str(name, buf.as_mut_slice()).ok().flatten() {
-                    TypedValue::String(*len, Some(str.to_string()))
-                } else {
-                    TypedValue::String(*len, None)
-                }
-            },
-            TypedValue::Int32(_) => TypedValue::Int32(nvs.get_i32(name).ok().flatten()),
-            TypedValue::Int64(_) => TypedValue::Int64(nvs.get_i64(name).ok().flatten()),
-            TypedValue::Bool(_) => {
-                let v = if let Some(value) = nvs.get_u8(name).ok().flatten() {
-                    value != 0
-                } else {
-                    false
-                };
-                TypedValue::Bool(v)
-            },
-            TypedValue::TimeZone(_) => {
-                if let Some(str) = nvs.get_str(name, &mut [0u8; TIMEZONE_LEN as usize]).ok().flatten() {
-                    if let Some(tz) = TimeZone::from_str(str) {
-                        TypedValue::TimeZone(tz)
-                    } else {
-                        TypedValue::TimeZone(TimeZone::Utc)
-                    }
-                } else {
-                    TypedValue::TimeZone(TimeZone::Utc)
-                }
-            },
-        };
-        info!("Finished reading config value {} from NVS: {:?}", name, result);
-        result
-    }
+    //             if let Some(str)= self.unwrap_and_log(name, nvs.get_str(name, buf.as_mut_slice()), problem_id) {
+    //                 TypedValue::String(*len, Some(str.to_string()))
+    //             } else {
+    //                 TypedValue::String(*len, None)
+    //             }
 
-    pub fn from_feature(feature_descriptor: FeatureDescriptor, nvs_partition: EspNvsPartition<NvsDefault>, feature_namespace: &EspNvs<NvsDefault>, internal: bool) -> anyhow::Result<Self> {
+    //             // // let x = nvs.get_str(name, buf.as_mut_slice());
+    //             // // match x {
+    //             // //     Ok(str) => log::info!("Read string value for {} from NVS: {:?}", name, str),
+    //             // //     Err(e) => log::info!("No string value for {} in NVS: {:?}", name, e),
+    //             // // }
+    //             // let x: Result<Option<&str>, esp_idf_sys::EspError> = nvs.get_str(name, buf.as_mut_slice());
+    //             // match nvs.get_str(name, buf.as_mut_slice()) {
+    //             //     Ok(opt_str) => {
+    //             //         if let Some(str)= opt_str {
+    //             //             TypedValue::String(*len, Some(str.to_string()))
+    //             //         } else {
+    //             //             TypedValue::String(*len, None)
+    //             //         }
+    //             //     },
+    //             //     Err(error) => {
+    //             //         log::error!("NVS error reading {}: {}", name, error);
+    //             //         anyhow::bail!("NVS error reading {}: {}", name, error);
+    //             //     },
+    //             // }
+    //             // // if let Some(str)= nvs.get_str(name, buf.as_mut_slice()).ok().flatten() {
+    //             // //     TypedValue::String(*len, Some(str.to_string()))
+    //             // // } else {
+    //             // //     TypedValue::String(*len, None)
+    //             // // }
+    //         },
+    //         TypedValue::Int32(_) => TypedValue::Int32(self.unwrap_and_log(name, nvs.get_i32(name), problem_id)),
+    //         TypedValue::Int64(_) => TypedValue::Int64(self.unwrap_and_log(name, nvs.get_i64(name), problem_id)),
+    //         TypedValue::Bool(_) => {
+    //             let v = if let Some(value) = self.unwrap_and_log(name, nvs.get_u8(name), problem_id) {
+    //                 value != 0
+    //             } else {
+    //                 false
+    //             };
+    //             TypedValue::Bool(v)
+    //         },
+    //         TypedValue::TimeZone(_) => {
+    //             if let Some(str) = self.unwrap_and_log(name, nvs.get_str(name, &mut [0u8; TIMEZONE_LEN as usize]), problem_id) {
+    //                 if let Some(tz) = TimeZone::from_str(str) {
+    //                     TypedValue::TimeZone(tz)
+    //                 } else {
+    //                     TypedValue::TimeZone(TimeZone::Utc)
+    //                 }
+    //             } else {
+    //                 TypedValue::TimeZone(TimeZone::Utc)
+    //             }
+    //         },
+    //     };
+    //     info!("Finished reading config value {} from NVS: {:?}", name, result);
+    //     Ok(result)
+    // }
+
+    pub fn from_feature(feature_descriptor: FeatureDescriptor, nvs_partition: EspNvsPartition<NvsDefault>, feature_namespace: &EspNvs<NvsDefault>, internal: bool, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
         let enabled = if internal {
             EnabledState::Required
         }
@@ -106,7 +143,7 @@ impl FeatureConfig {
                 }
             }
 
-            let enabled = if let Some(value) = feature_namespace.get_u8(&feature_descriptor.name).ok().flatten() {
+            let enabled = if let Some(value) = feature_namespace.get_u8(&feature_descriptor.name)? {
                 info!("Read feature enabled value for {} from NVS: {}", feature_descriptor.name, value);
                 value != 0
             } else {
@@ -118,10 +155,10 @@ impl FeatureConfig {
         };
 
         // info!("feature.enabled for {}: {}", feature_descriptor.name, enabled);
-        Self::new(feature_descriptor.name, enabled, feature_descriptor.config, nvs_partition)
+        Self::new(feature_descriptor.name, enabled, feature_descriptor.config, nvs_partition, problem_manager)
     }
 
-    pub fn new(name: String, enabled: EnabledState, mut config: Config, nvs_partition: EspNvsPartition<NvsDefault>) -> anyhow::Result<Self> {
+    pub fn new(name: String, enabled: EnabledState, mut config: Config, nvs_partition: EspNvsPartition<NvsDefault>, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
 
         let nvs_namespace = EspNvs::new(nvs_partition, &name, true)?;
 
@@ -137,18 +174,29 @@ impl FeatureConfig {
             }
         }
 
+        let config_store = EspConfigStore{
+            nvs_namespace,
+            problem_manager: problem_manager.clone(),
+        };
+
         info!("Loading feature {} config from NVS", &name);
         for (name, config_value) in config.map.iter_mut() {
-            config_value.value = Self::read_typed_value_from_nvs(&config_value.value, &nvs_namespace, name);
+            //config_value.value = 
+            config_store.load(name, config_value);
         }
         info!("Finished loading config: {:?}", config);
 
-        Ok(Self {
+
+        let feature_config = Self {
             name,
             enabled,
             config,
-            nvs_namespace,
-        })
+            // nvs_namespace,
+            // problem_manager: problem_manager.clone(),
+            config_store,
+        };
+
+        Ok(feature_config)
     }
 
     pub fn is_valid(&self) -> bool {
@@ -167,6 +215,75 @@ impl FeatureConfig {
         info!("Config for feature {} is valid", self.name);
         true
     }
+
+    // fn create_config_page(&self, resp: &mut esp_idf_svc::http::server::Response<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
+    //     info!("Creating config page for feature: {}", &self.name);
+    //     let feature_name = &self.name;
+    //     if let EnabledState::Required = self.enabled {
+    //         // Required features are always enabled, so we just show the config page without a checkbox
+    //     }
+    //     else {
+    //         info!("feature.enabled for {}: {}", &self.name, self.enabled.is_enabled());
+
+    //         let name = format!("feature_{}", &self.name);
+    //         let checked = if self.enabled.is_enabled() {
+    //             " checked"
+    //         } else {
+    //             ""
+    //         };
+
+    //         resp.write(format!(r#"
+    //                     <label for="{name}">{name}</label>
+    //                     <input id="{name}" name="{name}" type="checkbox"{checked}>
+    //                     <h2>{feature_name}</h2>
+    //         "#).as_bytes())?;
+    //     }
+
+    //     for (name, config_value) in &self.config.map {
+    //         let input_type_buf: String;
+    //         let input_type = match config_value.value {
+    //             TypedValue::String(len, _) => {
+    //                 input_type_buf = format!("text\" maxlength=\"{}", len);
+    //                 &input_type_buf
+    //             },
+    //             TypedValue::Int32(_) | TypedValue::Int64(_) => "number",
+    //             TypedValue::Bool(value) => {
+    //                 let checked = if value {
+    //                     " checked"
+    //                 }
+    //                 else {
+    //                     ""
+    //                 };
+
+    //                 resp.write(format!(r#"
+    //                             <label for="{name}">{name}</label>
+    //                             <input id="{name}" name="{name}" type="checkbox" value="true" {checked}>
+    //                 "#).as_bytes())?;
+    //                 continue;
+    //             },
+    //             TypedValue::TimeZone(current) => {
+    //                 info!("Config value {} is a TimeZone,", name);
+
+    //                 resp.write(format!(r#"
+    //                     <label for="{name}">{name}</label>
+    //                     <select id="{name}" name="{name}">"#).as_bytes())?;
+    //                 for tz in TimeZone::iter() {
+    //                     let selected_attr = if *tz == current { " selected" } else { "" };
+    //                     resp.write(format!(r#"<option value="{}"{}>{}</option>"#, tz.to_str(), selected_attr, tz.to_str()).as_bytes())?;
+    //                 }
+    //                 resp.write(format!(r#"</select>"#).as_bytes())?;
+    //                 continue;
+    //             },
+    //         };
+    //         let value = config_value.value.to_string();
+    //         resp.write(format!(r#"
+    //                     <label for="{name}">{name}</label>
+    //                     <input id="{name}" name="{name}" type="{input_type}" autocomplete="off" value="{value}">
+    //         "#).as_bytes())?;
+    //     }
+
+    //     Ok(())
+    // }
 
     fn create_config_page(&self, resp: &mut esp_idf_svc::http::server::Response<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
         info!("Creating config page for feature: {}", &self.name);
@@ -192,30 +309,61 @@ impl FeatureConfig {
         }
 
         for (name, config_value) in &self.config.map {
+            let value = config_value.value.to_string();
             let input_type_buf: String;
-            let input_type = match config_value.value {
+            let input_type = match &config_value.value {
                 TypedValue::String(len, _) => {
                     input_type_buf = format!("text\" maxlength=\"{}", len);
                     &input_type_buf
                 },
                 TypedValue::Int32(_) | TypedValue::Int64(_) => "number",
-                TypedValue::Bool(_) => "checkbox",
+                TypedValue::Bool(value) => {
+                    let checked = if *value {
+                        " checked"
+                    }
+                    else {
+                        ""
+                    };
+
+                    resp.write(format!(r#"
+                                <label for="{name}">{name}</label>
+                                <input id="{name}" name="{name}" type="checkbox" value="true" {checked}>
+                    "#).as_bytes())?;
+                    continue;
+                },
                 TypedValue::TimeZone(current) => {
                     info!("Config value {} is a TimeZone,", name);
 
                     resp.write(format!(r#"
+                                <!-- Timezone field {name}-->
                         <label for="{name}">{name}</label>
                         <select id="{name}" name="{name}">"#).as_bytes())?;
                     for tz in TimeZone::iter() {
-                        let selected_attr = if *tz == current { " selected" } else { "" };
+                        let selected_attr = if *tz == *current { " selected" } else { "" };
                         resp.write(format!(r#"<option value="{}"{}>{}</option>"#, tz.to_str(), selected_attr, tz.to_str()).as_bytes())?;
                     }
                     resp.write(format!(r#"</select>"#).as_bytes())?;
                     continue;
                 },
+                TypedValue::Cron(opt_cron) => {
+                    let desctiption = if let Some(cron) = opt_cron {
+                        cron.describe()
+                    }
+                    else {
+                        "None".to_string()
+                    };
+
+                    resp.write(format!(r#"
+                                <!-- Cron field {name}-->
+                                <label for="{name}">{name}</label>
+                                <input id="{name}" name="{name}" type="text" value="{value}">
+                                <input type="text" value="{desctiption}" disabled>
+                    "#).as_bytes())?;
+                    continue;
+                },
             };
-            let value = config_value.value.to_string();
             resp.write(format!(r#"
+                        <!-- Other field {name}-->
                         <label for="{name}">{name}</label>
                         <input id="{name}" name="{name}" type="{input_type}" autocomplete="off" value="{value}">
             "#).as_bytes())?;
@@ -242,74 +390,18 @@ impl FeatureConfig {
             info!("Processing config value: {}", name);
             let str_val = form.get(name).map(|s| s.as_str()).unwrap_or("").trim();
             if str_val.len() == 0 {
-                if config_value.required {
-                    log::error!("Missing required config value: {}", name);
-                }
-                else {
-                    log::info!("Config value {} is None", name);
-                    if ! config_value.value.is_none() {
-                        log::info!("Setting optional config value {} to None", name);
-                        config_value.value = config_value.value.to_none();
-                        self.nvs_namespace.remove(name)?;
-                    }
+                log::info!("Config value {} is None", name);
+                if ! config_value.value.is_none() {
+                    log::info!("Setting optional config value {} to None", name);
+                    self.config_store.remove(name, config_value)?;
                 }
             }
             else {
-                log::info!("Config value {} is {}", name, str_val);
-                match config_value.value.from_str(str_val) {
-                    Ok(new_value) => {
-                        if config_value.value.is_none() || new_value != config_value.value {
-                            log::info!("Config value {} changed from {:?} to {:?}", name, config_value.value, new_value);
-
-                            config_value.value = new_value;
-                            // Save to NVS
-                            log::info!("Save to NVS Config value {} is {}", name, str_val);
-                            match &config_value.value {
-                                TypedValue::String(_len, Some(val)) => {
-                                    info!("Saving string value for {} to NVS: {}", name, val);
-                                    self.nvs_namespace.set_str(name, val)?
-                                },
-                                TypedValue::Int32(Some(val)) => {
-                                    info!("Saving int32 value for {} to NVS: {}", name, val);
-                                    self.nvs_namespace.set_i32(name, *val)?
-                                },
-                                TypedValue::Int64(Some(val)) => {
-                                    info!("Saving int64 value for {} to NVS: {}", name, val);
-                                    self.nvs_namespace.set_i64(name, *val)?
-                                },
-                                TypedValue::Bool(val) => {
-                                    info!("Saving bool value for {} to NVS: {}", name, val);
-                                    self.nvs_namespace.set_u8(name, if *val { 1 } else { 0 })?
-                                },
-                                TypedValue::TimeZone(tz) => {
-                                    info!("Saving TimeZone value for {} to NVS: {}", name, tz.to_str());
-                                    self.nvs_namespace.set_str(name, tz.to_str())?
-                                },
-                                _ => anyhow::bail!("Invalid config value for {}: {:?}", name, config_value.value),
-                            };
-                        }
-                        else {
-                            log::info!("Config value {} unchanged: {:?}", name, config_value.value);
-                        }
-                    }
-                    Err(e) => {
-                        anyhow::bail!("Failed to parse config value for {}: {}", name, e);
-                    }
-                }
+                self.config_store.save(name, config_value, str_val)?;
             }
         }
 
         info!("Finished handling form config: {:?}", &self.config);
-
-        info!("Iterating over NVS items for debugging:");
-        let mut keys = self.nvs_namespace.keys(None).unwrap();
-
-        loop {
-            match keys.next_key() {
-                Some((key, data_type)) => log::info!("NVS item: {} of type {:?}", key, data_type),
-                None => break,
-            }
-        }
 
         Ok(())
     }
@@ -345,14 +437,16 @@ pub struct ConfigManagerBuilder {
     nvs_partition: EspNvsPartition<NvsDefault>,
     features: IndexMap<String, SharedConfig>,
     feature_namespace: EspNvs<NvsDefault>,
-    failure_reason: Arc<Mutex<Option<String>>>,
+    // failure_reason: Arc<Mutex<Option<String>>>,
+    problem_manager: Arc<ProblemManager>,
     ap_mode: Arc<Mutex<bool>>,
 }
 
 impl ConfigManagerBuilder {
     fn new(
         nvs_partition: EspNvsPartition<NvsDefault>, 
-        failure_reason: Arc<Mutex<Option<String>>>, 
+        // failure_reason: Arc<Mutex<Option<String>>>, 
+        problem_manager: Arc<ProblemManager>,
         ap_mode: Arc<Mutex<bool>>) -> anyhow::Result<Self>
     {
         let features: IndexMap<String, SharedConfig> = IndexMap::new();
@@ -362,13 +456,15 @@ impl ConfigManagerBuilder {
             nvs_partition,
             features,
             feature_namespace,
-            failure_reason,
+            // failure_reason,
+            problem_manager,
             ap_mode,
         })
     }
 
     pub fn add_feature(&mut self, descriptor: FeatureDescriptor, internal: bool) -> anyhow::Result<SharedConfig> {
-        let feature_config = FeatureConfig::from_feature(descriptor, self.nvs_partition.clone(), &self.feature_namespace, internal)?;
+        log::info!("About to create config for feature: {}", &descriptor.name);
+        let feature_config = FeatureConfig::from_feature(descriptor, self.nvs_partition.clone(), &self.feature_namespace, internal, &self.problem_manager)?;
         let feature_name = feature_config.name.clone();
 
         log::info!("Added feature: {}", &feature_name);
@@ -390,7 +486,8 @@ impl ConfigManagerBuilder {
             nvs_partition: self.nvs_partition,
             features: self.features,
             feature_namespace: self.feature_namespace,
-            failure_reason: self.failure_reason,
+            // failure_reason: self.failure_reason,
+            problem_manager: self.problem_manager,
             ap_mode: self.ap_mode,
         }
     }
@@ -400,17 +497,19 @@ pub struct ConfigManager {
     nvs_partition: EspNvsPartition<NvsDefault>,
     pub features: IndexMap<String, SharedConfig>,
     feature_namespace: EspNvs<NvsDefault>,
-    pub failure_reason: Arc<Mutex<Option<String>>>,
+    // pub failure_reason: Arc<Mutex<Option<String>>>,
+    problem_manager: Arc<ProblemManager>,
     ap_mode: Arc<Mutex<bool>>,
 }
 
 impl ConfigManager {
     pub fn builder(
         nvs_partition: EspNvsPartition<NvsDefault>, 
-        failure_reason: Arc<Mutex<Option<String>>>, 
+        // failure_reason: Arc<Mutex<Option<String>>>, 
+        problem_manager: Arc<ProblemManager>,
         ap_mode: Arc<Mutex<bool>>)  -> anyhow::Result<ConfigManagerBuilder>
     {
-        ConfigManagerBuilder::new(nvs_partition, failure_reason, ap_mode)
+        ConfigManagerBuilder::new(nvs_partition, problem_manager, ap_mode)
     }
 
     // pub fn new(nvs_partition: EspNvsPartition<NvsDefault>, 
@@ -535,12 +634,24 @@ impl ConfigManager {
                 </head>
                 <body>
                     <div class="page">"#.as_bytes())?;
+            
+            
 
-            if let Some(reason) = config_manager_clone.failure_reason.lock().unwrap().as_ref() {
-                info!("Failure reason present, showing error message on config page: {}", reason);
+            if ! config_manager_clone.problem_manager.is_empty() {
+                info!("Failure reason present, showing error message on config page");
                 resp.write(format!(r#"
                     <div style="background: #ffdddd; border: 1px solid #ff5c5c; padding: 10px; margin-bottom: 18px; border-radius: 8px;">
-                        <strong>Error:</strong> {reason}
+                        <strong>Error:</strong> <ul>
+                "#).as_bytes())?;
+
+                for reason in &*config_manager_clone.problem_manager {
+                    resp.write("<li>".as_bytes())?;
+                    resp.write(reason.as_bytes())?;
+                    resp.write("</li>\n".as_bytes())?;
+                }
+
+                resp.write(format!(r#"
+                    </ul>
                     </div>
                 "#).as_bytes())?;
             }
@@ -761,7 +872,7 @@ impl ConfigManager {
         info!("Erasing config");
         if let Some(core_feature_mutex) = self.features.get(CORE_FEATURE_NAME) {
             let core_feature = core_feature_mutex.lock();
-            core_feature.nvs_namespace.erase_all()?;
+            core_feature.config_store.erase_all()?;
         }
         Ok(())
     }
