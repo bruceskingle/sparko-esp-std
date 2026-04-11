@@ -118,7 +118,6 @@ pub struct ResolveTask {
     update_url: String,
     addr: Arc<Mutex<IpAddr>>,
     cnt: u32,
-    http_client: embedded_svc::http::client::Client<EspHttpConnection>,
 }
 
 impl Task for ResolveTask {
@@ -140,11 +139,11 @@ impl ResolveTask {
         let update_url = config.get_valid(UPDATE_URL)?;
         let get_ip_url = config.get_valid(GET_IP_URL)?;
 
-        let http_client = embedded_svc::http::client::Client::wrap(EspHttpConnection::new(&esp_idf_svc::http::client::Configuration {
-            // use_global_ca_store: true,
-            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
-            ..Default::default()
-        })?);
+        // let http_client = embedded_svc::http::client::Client::wrap(EspHttpConnection::new(&esp_idf_svc::http::client::Configuration {
+        //     // use_global_ca_store: true,
+        //     crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+        //     ..Default::default()
+        // })?);
 
         let current_dns = Self::resolve_single(&host_name)?;
         info!("Current DNS resolution for {}: {}", &host_name, current_dns);
@@ -159,7 +158,7 @@ impl ResolveTask {
             update_url,
             addr,
             cnt: 0,
-            http_client,
+            // http_client,
         };
 
         task.execute();
@@ -200,15 +199,17 @@ impl ResolveTask {
     }
 
     fn get_public_ip_address(&mut self) -> anyhow::Result<IpAddr> {
-        // HTTP client
-        // let connection = EspHttpConnection::new(&esp_idf_svc::http::client::Configuration::default())?;
-        // let mut client = embedded_svc::http::client::Client::wrap(connection);
+        let mut http_client = embedded_svc::http::client::Client::wrap(EspHttpConnection::new(&esp_idf_svc::http::client::Configuration {
+            // use_global_ca_store: true,
+            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+            ..Default::default()
+        })?);
 
-        
-        let request = self.http_client.request(Method::Get, &self.get_ip_url, &[])?;
+        info!("DynDns2: about to get_public_ip_address from: {}", &self.get_ip_url);
+        let request = http_client.request(Method::Get, &self.get_ip_url, &[])?;
         let mut response = request.submit()?;
 
-        println!("Status: {}", response.status());
+        info!("DynDns2: get_public_ip_address Status: {}", response.status());
 
         let mut body = [0u8; 512];
         let bytes_read = response.read(&mut body)?;
@@ -248,7 +249,13 @@ impl ResolveTask {
     }
 
     fn get_ignore_response_body(&mut self, url: &str) -> anyhow::Result<()> {
-        let request = self.http_client.request(Method::Get, url, &[])?;
+        let mut http_client = embedded_svc::http::client::Client::wrap(EspHttpConnection::new(&esp_idf_svc::http::client::Configuration {
+            // use_global_ca_store: true,
+            crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
+            ..Default::default()
+        })?);
+
+        let request = http_client.request(Method::Get, url, &[])?;
         let mut response = request.submit()?;
 
         println!("Status: {}", response.status());
