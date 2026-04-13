@@ -3,7 +3,7 @@ use std::{backtrace::Backtrace, net::{IpAddr, UdpSocket}, sync::{Arc, Mutex}, th
 
 use croner::Cron;
 use esp_idf_hal::{gpio::PinDriver, ledc::LedcDriver};
-use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method, client::EspHttpConnection, server::EspHttpServer}, nvs::{EspDefaultNvsPartition, EspNvs}, timer::EspTaskTimerService};
+use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method, client::EspHttpConnection}, nvs::{EspDefaultNvsPartition, EspNvs}, timer::EspTaskTimerService};
 use indexmap::IndexMap;
 use log::{error, info};
 use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
@@ -18,7 +18,7 @@ use crate::led::MonoLedManager;
 use crate::led::SimpleLedManager;
 
 
-use crate::{config::ConfigManagerBuilder, esp_http_server::{EspHttpServerManager, TMethod}, led::LedManager};
+use crate::{config::ConfigManagerBuilder, esp_http_server::{EspHttpServer, TMethod}, led::LedManager};
 use crate::{Feature, config::{ConfigManager, SharedConfig}, core::{Core, MDNS_HOSTNAME}, led::RgbLedManager, wifi::WiFiManager};
 
 
@@ -249,7 +249,7 @@ impl SparkoEsp32StdBuilder {
         // }
 
 
-        let mut server_manager = EspHttpServerManager::create()?;
+        let mut server_manager = EspHttpServer::new()?;
 
         server_manager.init_common_pages()?;
         
@@ -259,7 +259,7 @@ impl SparkoEsp32StdBuilder {
         // This should be in the app
 
     let cloned_ap_mode = self.ap_mode.clone();
-    server_manager.on("/", TMethod::Get, move |req: crate::esp_http_server::Request<'_, '_>| {
+    server_manager.on("/", TMethod::Get, Box::new(move |req: crate::esp_http_server::Request<'_, '_>| {
 
             // info!("Received request for / from {}", req.connection().remote_addr());
 
@@ -300,7 +300,7 @@ impl SparkoEsp32StdBuilder {
                     "#.as_bytes())?;
             }
             Ok(())
-        })?;
+        }))?;
 
         // END APP CODE
 
@@ -347,7 +347,7 @@ pub struct SparkoEsp32Std {
 #[cfg(feature = "simple-led")]
     pub led_manager: SimpleLedManager<'static>,
     pub config_manager: Arc<ConfigManager>,
-    pub server_manager: EspHttpServerManager<'static>,
+    pub server_manager: Box<dyn HttpServer>,
     features: Vec<FeatureHolder>,
     pub ap_mode: Arc<Mutex<bool>>,
     // task_manager: TaskManager,

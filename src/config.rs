@@ -1,13 +1,10 @@
 use std::io::Write;
 
-use esp_idf_svc::http::Method;
-use esp_idf_svc::http::server::EspHttpConnection;
-
 use indexmap::IndexMap;
 use log::info;
 use sparko_embedded_std::{config::{Config, ConfigValue, EnabledState, TypedValue}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
 use url::form_urlencoded;
-use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, esp_http_server::{EspHttpServerManager, HttpServer, Request, Response, TMethod, TRequest}};
+use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, esp_http_server::{HttpServer, Request, Response, TMethod, TRequest}};
 use crate::config_store::ConfigStore;
 use std::{sync::{Arc, Mutex}};
 
@@ -686,21 +683,21 @@ impl ConfigManager {
             Ok(())
     }
 
-    pub fn create_pages(config_manager: &Arc<Self>, server_manager: &mut EspHttpServerManager) -> anyhow::Result<()> {
+    pub fn create_pages(config_manager: &Arc<Self>, server_manager: &mut Box<dyn HttpServer>) -> anyhow::Result<()> {
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/config", TMethod::Get, move |req| {
+        server_manager.on("/config", TMethod::Get, Box::new(move |req: Request<'_, '_>| {
 
             // info!("Received request for / from {}", req.connection().remote_addr());
 
             info!("Received {:?} request for {}", req.method(), req.uri());
 
             Self::show_config_page(&config_manager_clone, req)
-        })?;
+        }))?;
 
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/command", TMethod::Post, move |mut req| {
+        server_manager.on("/command", TMethod::Post, Box::new(move |mut req: Request<'_, '_>| {
             info!("Received {:?} request for {}", req.method(), req.uri());
             
 
@@ -761,11 +758,11 @@ impl ConfigManager {
             }
 
             Ok(())
-        })?;
+        }))?;
 
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/update_config", TMethod::Post, move |mut req| {
+        server_manager.on("/update_config", TMethod::Post, Box::new(move |mut req: Request<'_, '_>| {
 
             // info!("Received request for /connect from {}", req.connection().remote_addr());
 
@@ -800,10 +797,10 @@ impl ConfigManager {
             // // });
 
             // Ok(())
-        })?;
+        }))?;
 
         let config_manager_clone = config_manager.clone();
-        server_manager.on("/generate_204", TMethod::Get, move |req| {
+        server_manager.on("/generate_204", TMethod::Get, Box::new(move |req: Request<'_, '_>| {
 
             let ok = config_manager_clone.is_online();
 
@@ -820,10 +817,10 @@ impl ConfigManager {
                 resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
             }
             Ok(())
-        })?;
+        }))?;
 
         let config_manager_clone = config_manager.clone();
-        server_manager.on("/hotspot-detect.html", TMethod::Get, move |req| {
+        server_manager.on("/hotspot-detect.html", TMethod::Get, Box::new(move |req: Request<'_, '_>| {
 
             let ok = config_manager_clone.is_online();
 
@@ -846,10 +843,10 @@ impl ConfigManager {
                 resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
             }
             Ok(())
-        })?;
+        }))?;
 
         let config_manager_clone = config_manager.clone();
-        server_manager.on("/connecttest.txt", TMethod::Get, move |req| {
+        server_manager.on("/connecttest.txt", TMethod::Get, Box::new(move |req: Request<'_, '_>| {
 
             let ok = config_manager_clone.is_online();
 
@@ -865,7 +862,7 @@ impl ConfigManager {
                 resp.write(b"Not configured")?;
             }
             Ok(())
-        })?;
+        }))?;
 
         Ok(())
     }
