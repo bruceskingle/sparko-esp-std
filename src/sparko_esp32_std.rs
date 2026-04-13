@@ -10,7 +10,7 @@ use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Tas
 use std::str::FromStr;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
-use crate::esp_http_server::HttpServer;
+use crate::esp_http_server::{HttpServer, TRequest};
 
 #[cfg(feature = "board-xiao-esp32c6")]
 use crate::led::MonoLedManager;
@@ -259,7 +259,7 @@ impl SparkoEsp32StdBuilder {
         // This should be in the app
 
     let cloned_ap_mode = self.ap_mode.clone();
-    server_manager.on("/", TMethod::Get, move |req| {
+    server_manager.on("/", TMethod::Get, move |req: crate::esp_http_server::Request<'_, '_>| {
 
             // info!("Received request for / from {}", req.connection().remote_addr());
 

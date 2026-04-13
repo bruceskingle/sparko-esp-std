@@ -1,10 +1,29 @@
-use esp_idf_svc::http::{Method, server::{EspHttpConnection, EspHttpServer}};
-
-// use crate::http_server::{THttpServer, TRequest, TResponse};
 
 use std::io::Write;
 
 use log::info;
+
+pub trait Response: std::io::Write {}
+
+pub trait Request {
+    type Response : Response;
+
+    fn method(&self) -> anyhow::Result<TMethod>;
+    fn uri(&self) -> &str;
+
+    fn into_response(
+        self,
+        status: u16,
+        msg: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> anyhow::Result<Self::Response>;
+
+    fn into_ok_response(
+        self,
+    ) -> anyhow::Result<Self::Response>;
+}
+
+
 
 #[derive(Debug)]
 pub enum TMethod {
@@ -14,43 +33,24 @@ pub enum TMethod {
     Post,
 }
 
-pub trait TResponse: std::io::Write
-{}
+pub trait HttpServer {
+    type Req:  Request;
 
-pub trait TRequest<'r, 'c>
-where 'c:'r 
-{
-    type Response: TResponse;
-
-    fn method(&self) -> anyhow::Result<TMethod>;
-    fn uri(&'r self) -> &'r str;
-    fn into_ok_response(self) -> anyhow::Result<Self::Response>;
-    fn into_response(
-        self,
-        status: u16,
-        message: Option<&'r str>,
-        headers: &'r [(&'r str, &'r str)],
-    ) -> anyhow::Result<Self::Response>;
-}
-
-pub trait THttpServer
-{
-    type Request<'r, 'c>: TRequest<'r, 'c>
-    where 'c:'r ;
-
-    fn fn_handler<F>(
+    fn on<F>(
         &mut self,
         uri: &str,
         method: TMethod,
-        f: F,
+        handler: F,
     ) -> anyhow::Result<()>
     where
-        F: for<'r, 'c> Fn(Self::Request<'r, 'c>) -> anyhow::Result<()> + Send + Sync + 'static;
-
+        F: Fn(Self::Req) -> anyhow::Result<()>
+            + Send
+            + Sync
+            + 'static;
 
     fn init_common_pages(&mut self) -> anyhow::Result<()> {
-        self.fn_handler("/main.css", TMethod::Get, |req| {
-            // info!("Received {:?} request for {}", req.method(), &req.uri().to_string());
+        self.on("/main.css", TMethod::Get, |req| {
+            info!("Received {:?} request for {}", req.method(), req.uri());
 
             let mut resp = req.into_response(
                 200,
@@ -76,14 +76,24 @@ button:active { background: #005bb5; }
 
 
 
-pub struct EspResponse<'r,'c>
-where 'c: 'r
-{
-    esp_response: esp_idf_svc::http::server::Response<&'r mut EspHttpConnection<'c>>,
+
+// PRIVATE STARTS HERE
+
+use esp_idf_svc::http::{Method, server::{EspHttpConnection, EspHttpServer}};
+
+// use crate::http_server::{Request,Response,HttpServer, TMethod};
+
+
+
+pub struct EspResponse<'s> {
+    inner: esp_idf_svc::http::server::Response<
+        &'s mut EspHttpConnection<'s>,
+    >,
 }
 
+impl Response  for EspResponse<'_> {}
 
-impl EspResponse<'_,'_> {
+impl EspResponse<'_> {
     fn anyhow<T>(result: Result<T, esp_idf_hal::io::EspIOError>) -> std::io::Result<T> {
         match result {
             Ok(cnt) => Ok(cnt),
@@ -92,33 +102,46 @@ impl EspResponse<'_,'_> {
     }
 }
 
-impl<'a> std::io::Write for EspResponse<'_,'_> {
+impl std::io::Write for EspResponse<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        Self::anyhow(self.esp_response.write(buf))
+        Self::anyhow(self.inner.write(buf))
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Self::anyhow(self.esp_response.flush())
+        Self::anyhow(self.inner.flush())
     }
 }
 
-impl TResponse for EspResponse<'_,'_> 
-{
+// pub struct EspRequest<'r, 'c> {
+//     inner: esp_idf_svc::http::server::Request<
+//         &'r mut EspHttpConnection<'c>,
+//     >,
+// }
 
+// pub struct EspRequest<'r> {
+//     inner: esp_idf_svc::http::server::Request<
+//         &'r mut EspHttpConnection<'static> // ← key trick
+//     >,
+// }
+
+pub struct EspRequest<'s> {
+    inner: esp_idf_svc::http::server::Request<&'s mut EspHttpConnection<'s>>,
 }
 
-pub struct EspRequest<'r,'c>
-{
-    esp_request: esp_idf_svc::http::server::Request<&'r mut EspHttpConnection<'c>>
+impl EspRequest<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> anyhow::Result<usize>{
+
+        Ok(self.inner.read(buf)?)
+    }
 }
 
-impl<'r,'c> TRequest<'r, 'c> for EspRequest<'r,'c> 
-where 'c: 'r
-{
-    type Response = EspResponse<'r,'c>;
+impl<'s> Request for EspRequest<'s> {
+    type Response = EspResponse<'s>;
+    // where
+    //     Self: 'r;
 
     fn method(&self) -> anyhow::Result<TMethod> {
-        let m = self.esp_request.method();
+        let m = self.inner.method();
         Ok(match m {
             Method::Delete => TMethod::Delete,
             Method::Get => TMethod::Get,
@@ -128,55 +151,42 @@ where 'c: 'r
         })
     }
 
-    fn uri(&'r self) -> &'r str {
-        self.esp_request.uri()
+    fn uri(&self) -> &str {
+        self.inner.uri()
     }
-    
-    fn into_ok_response(self) -> anyhow::Result<Self::Response> {
 
-        let esp_response: esp_idf_svc::http::server::Response<&'r mut EspHttpConnection<'c>> = self.esp_request.into_ok_response()?;
-        let response: EspResponse<'r,'c> = EspResponse {
-            esp_response
-        };
-
-        Ok(response)
-    }
-    
     fn into_response(
         self,
         status: u16,
-        message: Option<&'r str>,
-        headers: &'r [(&'r str, &'r str)],
-    ) -> anyhow::Result<Self::Response> {
-
-        let esp_response: esp_idf_svc::http::server::Response<&'r mut EspHttpConnection<'c>> = self.esp_request.into_response(status, message, headers)?;
-        let response: EspResponse<'r,'c> = EspResponse {
-            esp_response
-        };
-
-        Ok(response)
-    }
-}
-
-impl<'r, 'c> EspRequest<'r, 'c> {
-    // type Response = EspResponse<'r>;
-
-    
-}
-
-pub struct EspHttpServerManager<'s>{
-    server: EspHttpServer<'s>,
-}
-
-impl<'s, 'r> EspHttpServerManager<'s> {
-    pub fn new() -> anyhow::Result<Self> {
-        // let server = EspHttpServer::new(&Default::default())?;
-        Ok(Self {
-            server: EspHttpServer::new(&Default::default())?,
+        msg: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> anyhow::Result<Self::Response>
+    {
+        Ok(Self::Response {
+            inner: self.inner.into_response(status, msg, headers)?,
         })
     }
-
+    
+    fn into_ok_response(
+        self
+    ) -> anyhow::Result<Self::Response> {
+        self.into_response(200, Some("OK"), &[])
+    }
 }
+
+
+// pub struct EspHttpServerManager<'s>{
+//     server: EspHttpServer<'s>,
+// }
+
+// impl<'s, 'r> EspHttpServerManager<'s> {
+//     pub fn new() -> anyhow::Result<Self> {
+//         // let server = EspHttpServer::new(&Default::default())?;
+//         Ok(Self {
+//             server: EspHttpServer::new(&Default::default())?,
+//         })
+//     }
+// }
 
 fn to_esp_method(method: TMethod) -> Method {
     match method {
@@ -187,41 +197,177 @@ fn to_esp_method(method: TMethod) -> Method {
     }
 }
 
-// i
+// fn adapt<'s, F>(
+//     f: F,
+// ) -> impl Fn(
+//     esp_idf_svc::http::server::Request<
+//         &'s mut EspHttpConnection<'s>
+//     >
+// ) -> anyhow::Result<()>
+// where
+//     F: Fn(EspRequest<'s>) -> anyhow::Result<()>
+//         + Send
+//         + Sync
+//         + 'static,
+// {
+//     move |raw_req| {
+//         let req = EspRequest { inner: raw_req };
+//         f(req)
+//     }
+// }
 
-fn adapt<F>(f: F) -> impl for<'r,'c> Fn(esp_idf_svc::http::server::Request<&'r mut EspHttpConnection<'c>>) -> anyhow::Result<()>
+fn adapt<F>(f: F) -> impl for<'r> Fn(esp_idf_svc::http::server::Request<&mut EspHttpConnection<'r>>) -> anyhow::Result<()>
 where
-    F: for<'r, 'c> Fn(EspRequest<'r, 'c>) -> anyhow::Result<()> + Send + Sync + 'static,
+    F: for<'r> Fn(EspRequest<'r>) -> anyhow::Result<()>
+        + Send
+        + Sync
+        + 'static
 {
     move |raw_req| {
-        let esp_req = EspRequest { esp_request: raw_req };
-        f(esp_req)
+        let req = EspRequest { inner: raw_req };
+        f(req)
     }
 }
 
-impl<'s> THttpServer for EspHttpServerManager<'s>
-{
-    type Request<'r, 'c> = EspRequest<'r, 'c>
-    where 'c: 'r;
+pub struct EspHttpServerManager<'s> {
+    server: EspHttpServer<'s>,
+}
 
-    fn fn_handler<F>(
+impl<'s> EspHttpServerManager<'s> {
+    pub fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            server: EspHttpServer::new(&Default::default())?,
+        })
+    }
+}
+
+impl<'s> HttpServer for EspHttpServerManager<'s> {
+    type Req = EspRequest<'s>;
+
+    fn on<F>(
         &mut self,
         uri: &str,
         method: TMethod,
-        f: F,
+        handler: F,
     ) -> anyhow::Result<()>
     where
-        F: for<'r, 'c> Fn(Self::Request<'r, 'c>) -> anyhow::Result<()> + Send + Sync + 'static,
+        F: Fn(Self::Req) -> anyhow::Result<()>
+            + Send
+            + Sync
+            + 'static,
     {
-        // let wrapped_f =
-        //     move |raw_req| {
-        //         let esp_req = EspRequest { esp_request: raw_req };
-        //         f(esp_req)
-        //     };
-
-        // self.server.fn_handler(uri, to_esp_method(method), wrapped_f)?;
-
-        self.server.fn_handler(uri, to_esp_method(method), adapt(f))?;
+        self.server
+            .fn_handler(uri, to_esp_method(method), 
+            // adapt(handler)
+            move |raw_req| {
+                let req = EspRequest { inner: raw_req };
+                handler(req)
+            }
+        
+        )?;
         Ok(())
     }
 }
+
+// impl<'s> HttpServer for EspHttpServerManager<'s> {
+//     type Req = EspRequest<'s>;
+//     fn on<F>(
+//         &mut self,
+//         uri: &str,
+//         method: TMethod,
+//         handler: F,
+//     ) -> anyhow::Result<()>
+//     where
+//         F: for<'r> Fn(Self::Req) -> anyhow::Result<()>
+//             + Send
+//             + Sync
+//             + 'static,
+//     {
+//         self.server.fn_handler(
+//             uri,
+//             to_esp_method(method),
+//             adapt(handler)
+//             // move |raw_req| {
+//             //     let req = EspRequest { inner: raw_req };
+//             //     handler(req)
+//             // },
+//         )?;
+
+//         Ok(())
+//     }
+// }
+
+// impl<'s> HttpServer for EspHttpServerManager<'s> {
+//     type Req<'r> = EspRequest<'r, 's>;
+
+//     fn on<F>(
+//         &mut self,
+//         uri: &str,
+//         method: TMethod,
+//         handler: F,
+//     ) -> anyhow::Result<()>
+//     where
+//         F: for<'r> Fn(Self::Req<'r>) -> anyhow::Result<()>
+//             + Send
+//             + Sync
+//             + 'static,
+//     {
+//         self.server.fn_handler(
+//             uri,
+//             to_esp_method(method),
+//             move |raw_req| {
+//                 let req = EspRequest { inner: raw_req };
+//                 handler(req)
+//             },
+//         )?;
+
+//         Ok(())
+//     }
+// }
+
+// impl<'s> HttpServer for EspHttpServerManager<'s> {
+//     type Req<'r> = EspRequest<'r, 's>;
+
+//     fn on<F>(&mut self, uri: &str, method: TMethod, handler: F)
+//         -> anyhow::Result<()>
+//     where
+//         F: for<'r> Fn(Self::Req<'r>) -> anyhow::Result<()>
+//             + Send
+//             + Sync
+//             + 'static,
+//     {
+//         self.server.fn_handler(
+//             uri,
+//             to_esp_method(method),
+//             move |raw_req| {
+//                 let req = EspRequest { inner: raw_req };
+//                 handler(req)
+//             },
+//         )?;
+
+//         Ok(())
+//     }
+// }
+
+// impl<'s> HttpServer for EspHttpServerManager<'s> {
+//     fn on<F>(
+//         &mut self,
+//         uri: &str,
+//         method: TMethod,
+//         handler: F,
+//     ) -> anyhow::Result<()>
+//     where
+//         F: Fn(Request) -> anyhow::Result<()>
+//             + Send
+//             + Sync
+//             + 'static,
+//     {
+//         self.server.fn_handler(
+//             uri,
+//             to_esp_method(method),
+//             adapt(handler),
+//         )?;
+
+//         Ok(())
+//     }
+// }
