@@ -249,7 +249,7 @@ impl SparkoEsp32StdBuilder {
         // }
 
 
-        let mut server_manager = EspHttpServerManager::new()?;
+        let mut server_manager = EspHttpServerManager::create()?;
 
         server_manager.init_common_pages()?;
         
