@@ -5,136 +5,146 @@
 use std::io::Write;
 
 use log::info;
+use sparko_embedded_std::http_server::{HttpServer, TMethod, TRequest, TResponse};
 
 
 
-/*
-✅ Practical pattern (safe abstraction boundary)
-You can safely erase 'c if you enforce usage constraints:
-pub struct Request<'r> {
-    inner: EspRequest<'r, 'static>,
-}
-
-impl<'r> Request<'r> {
-    pub fn new<'c>(req: EspRequest<'r, 'c>) -> Self {
-        Self {
-            inner: unsafe { std::mem::transmute(req) },
-        }
-    }
-}
-Then enforce API discipline:
-Only expose methods like:
-impl<'r> Request<'r> {
-    pub fn read(&mut self) -> &[u8] { ... }
-    pub fn write(&mut self, ...) { ... }
-}
-❌ Do NOT expose:
-&EspHttpConnection
-anything carrying 'c
-*/
-
-pub trait TResponse: std::io::Write {}
-
-pub trait TRequest {
-    type Resp : TResponse;
-
-    fn method(&self) -> anyhow::Result<TMethod>;
-    fn uri(&self) -> &str;
-
-    fn into_response(
-        self,
-        status: u16,
-        msg: Option<&str>,
-        headers: &[(&str, &str)],
-    ) -> anyhow::Result<Self::Resp>;
-
-    fn into_ok_response(
-        self,
-    ) -> anyhow::Result<Self::Resp>;
-}
-
-
-// pub trait HttpServer {
-//     // type Req<'r, 'c>: TRequest
-//     // // where
-//     // //     Self: 'r,
-//     // //     Self: 'c
-//     //     ;
-//     fn on<F>(
-//         &mut self,
-//         uri: &str,
-//         method: TMethod,
-//         handler: F,
-//     ) -> anyhow::Result<()>
-//     where
-//         // F: for<'r, 'c> Fn(Self::Req<'r, 'c>) -> anyhow::Result<()>
-//         F: for<'r, 'c> Fn(Request<'r, 'c>) -> anyhow::Result<()>
-//             + Send
-//             + Sync
-//             + 'static;
-type Handler = dyn Fn(Request<'_, '_>) -> anyhow::Result<()>
-    + Send
-    + Sync
-    + 'static;
-
-pub trait HttpServer {
-    fn on(
-        &mut self,
-        uri: &str,
-        method: TMethod,
-        handler: Box<Handler>,
-    ) -> anyhow::Result<()>;
-    
-
-    fn init_common_pages(&mut self) -> anyhow::Result<()>
-     {
-        self.on("/main.css", TMethod::Get, 
-            Box::new(|req: Request<'_, '_>| {
-                info!("Received {:?} request for {}", req.method(), req.uri());
-
-                let mut resp = req.into_response(
-                    200,
-                    Some("OK"),
-                    &[("Content-Type", "text/css")],
-                )?;
-                resp.write(r#"
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; background: #f7f7f7; }
-    .page { max-width: 480px; margin: 0 auto; padding: 18px; }
-    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-    label { display: block; margin: 12px 0 6px; font-weight: 600; }
-    input, select { width: 100%; padding: 10px 10px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
-    button { margin-top: 18px; width: 100%; padding: 12px; font-size: 1rem; border-radius: 10px; border: none; background: #007aff; color: #fff; }
-    button:active { background: #005bb5; }
-                            "#.as_bytes())?;
-                Ok(())
-                
-        }))?;
-        Ok(())
-    }
-}
-
-// pub struct HttpServerManager<S: HttpServer> {
-//     server: S,
+// /*
+// ✅ Practical pattern (safe abstraction boundary)
+// You can safely erase 'c if you enforce usage constraints:
+// pub struct Request<'r> {
+//     inner: EspRequest<'r, 'static>,
 // }
 
-// impl<S: HttpServer> HttpServer for HttpServerManager<S> {
-//     fn on<F>(
+// impl<'r> Request<'r> {
+//     pub fn new<'c>(req: EspRequest<'r, 'c>) -> Self {
+//         Self {
+//             inner: unsafe { std::mem::transmute(req) },
+//         }
+//     }
+// }
+// Then enforce API discipline:
+// Only expose methods like:
+// impl<'r> Request<'r> {
+//     pub fn read(&mut self) -> &[u8] { ... }
+//     pub fn write(&mut self, ...) { ... }
+// }
+// ❌ Do NOT expose:
+// &EspHttpConnection
+// anything carrying 'c
+// */
+
+// pub trait TResponse: std::io::Write {}
+
+// pub trait TRequest {
+//     type Resp : TResponse;
+
+//     fn method(&self) -> anyhow::Result<TMethod>;
+//     fn uri(&self) -> &str;
+
+//     fn into_response(
+//         self,
+//         status: u16,
+//         msg: Option<&str>,
+//         headers: &[(&str, &str)],
+//     ) -> anyhow::Result<Self::Resp>;
+
+//     fn into_ok_response(
+//         self,
+//     ) -> anyhow::Result<Self::Resp>;
+// }
+
+
+// // pub trait HttpServer {
+// //     // type Req<'r, 'c>: TRequest
+// //     // // where
+// //     // //     Self: 'r,
+// //     // //     Self: 'c
+// //     //     ;
+// //     fn on<F>(
+// //         &mut self,
+// //         uri: &str,
+// //         method: TMethod,
+// //         handler: F,
+// //     ) -> anyhow::Result<()>
+// //     where
+// //         // F: for<'r, 'c> Fn(Self::Req<'r, 'c>) -> anyhow::Result<()>
+// //         F: for<'r, 'c> Fn(Request<'r, 'c>) -> anyhow::Result<()>
+// //             + Send
+// //             + Sync
+// //             + 'static;
+// type Handler = dyn Fn(dyn TRequest) -> anyhow::Result<()>
+//     + Send
+//     + Sync
+//     + 'static;
+
+// pub trait HttpServer {
+//     fn on(
 //         &mut self,
 //         uri: &str,
 //         method: TMethod,
-//         handler: F,
-//     ) -> anyhow::Result<()>
-//     where
-//         // F: for<'r, 'c> Fn(Self::Req<'r, 'c>) -> anyhow::Result<()>
-//         F: for<'r, 'c> Fn(Request<'r, 'c>) -> anyhow::Result<()>
-//             + Send
-//             + Sync
-//             + 'static {
-//         self.server.on(uri, method, handler)
+//         handler: Box<Handler>,
+//     ) -> anyhow::Result<()>;
+    
+
+//     fn init_common_pages(&mut self) -> anyhow::Result<()>
+//      {
+//         self.on("/main.css", TMethod::Get, 
+//             Box::new(|req: Request<'_, '_>| {
+//                 info!("Received {:?} request for {}", req.method(), req.uri());
+
+//                 let mut resp = req.into_response(
+//                     200,
+//                     Some("OK"),
+//                     &[("Content-Type", "text/css")],
+//                 )?;
+//                 resp.write(r#"
+//     body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; background: #f7f7f7; }
+//     .page { max-width: 480px; margin: 0 auto; padding: 18px; }
+//     h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+//     label { display: block; margin: 12px 0 6px; font-weight: 600; }
+//     input, select { width: 100%; padding: 10px 10px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+//     button { margin-top: 18px; width: 100%; padding: 12px; font-size: 1rem; border-radius: 10px; border: none; background: #007aff; color: #fff; }
+//     button:active { background: #005bb5; }
+//                             "#.as_bytes())?;
+//                 Ok(())
+                
+//         }))?;
+//         Ok(())
 //     }
 // }
 
-// End Public
+// // pub struct HttpServerManager<S: HttpServer> {
+// //     server: S,
+// // }
+
+// // impl<S: HttpServer> HttpServer for HttpServerManager<S> {
+// //     fn on<F>(
+// //         &mut self,
+// //         uri: &str,
+// //         method: TMethod,
+// //         handler: F,
+// //     ) -> anyhow::Result<()>
+// //     where
+// //         // F: for<'r, 'c> Fn(Self::Req<'r, 'c>) -> anyhow::Result<()>
+// //         F: for<'r, 'c> Fn(Request<'r, 'c>) -> anyhow::Result<()>
+// //             + Send
+// //             + Sync
+// //             + 'static {
+// //         self.server.on(uri, method, handler)
+// //     }
+// // }
+
+
+// #[derive(Debug)]
+// pub enum TMethod {
+//     Delete,
+//     Get,
+//     Head,
+//     Post,
+// }
+
+// // End Public
 
 pub struct EspRequest<'r, 'c> {
     inner: esp_idf_svc::http::server::Request<
@@ -229,49 +239,39 @@ impl std::io::Write for Response<'_, '_> {
     }
 }
 
-#[derive(Debug)]
-pub enum TMethod {
-    Delete,
-    Get,
-    Head,
-    Post,
-}
 
    
 
 
 
-pub struct EspHttpServer<'s>{
-    server: esp_idf_svc::http::server::EspHttpServer<'s>,
-}
 
-impl<'s, 'r> EspHttpServer<'s> {
-    // pub fn new2() -> anyhow::Result<Self> {
-    //     // let server = EspHttpServer::new(&Default::default())?;
-    //     Ok(Self {
-    //         server: esp_idf_svc::http::server::EspHttpServer::new(&Default::default())?,
-    //     })
-    // }
+// impl<'s, 'r> EspHttpServer<'s> {
+//     // pub fn new2() -> anyhow::Result<Self> {
+//     //     // let server = EspHttpServer::new(&Default::default())?;
+//     //     Ok(Self {
+//     //         server: esp_idf_svc::http::server::EspHttpServer::new(&Default::default())?,
+//     //     })
+//     // }
 
-    pub fn new() -> anyhow::Result<Box<dyn HttpServer>> {
+//     pub fn new() -> anyhow::Result<Box<dyn HttpServer>> {
 
-        let s1: esp_idf_svc::http::server::EspHttpServer<'_> = esp_idf_svc::http::server::EspHttpServer::new(&Default::default())?;
-        let s2: EspHttpServer<'_> = EspHttpServer {
-            server: s1,
-        };
-        // let s3: HttpServerManager<EspHttpServer<'_>> = HttpServerManager {
-        //     server: s2,
-        // };
+//         let s1: esp_idf_svc::http::server::EspHttpServer<'_> = esp_idf_svc::http::server::EspHttpServer::new(&Default::default())?;
+//         let s2: EspHttpServer<'_> = EspHttpServer {
+//             server: s1,
+//         };
+//         // let s3: HttpServerManager<EspHttpServer<'_>> = HttpServerManager {
+//         //     server: s2,
+//         // };
 
-        Ok(Box::new(s2))
+//         Ok(Box::new(s2))
 
-        // Ok(HttpServerManager {
-        //     server: EspHttpServerManager<'s>{
-        //         server: EspHttpServer::new(&Default::default())?,
-        //     }
-        // })
-    }
-}
+//         // Ok(HttpServerManager {
+//         //     server: EspHttpServerManager<'s>{
+//         //         server: EspHttpServer::new(&Default::default())?,
+//         //     }
+//         // })
+//     }
+// }
 
 fn to_esp_method(method: TMethod) -> esp_idf_svc::http::server::Method {
     match method {
@@ -282,68 +282,235 @@ fn to_esp_method(method: TMethod) -> esp_idf_svc::http::server::Method {
     }
 }
 
-fn adapt<'c, F>(
-    f: F,
-) -> impl for<'r> Fn(
-    esp_idf_svc::http::server::Request<
-        &'r mut esp_idf_svc::http::server::EspHttpConnection<'c>
-    >
-) -> anyhow::Result<()>
-where
-    F: for<'r> Fn(Request<'r, 'c>) -> anyhow::Result<()>
-        + Send
-        + Sync
-        + 'static,
-{
-    move |raw_req| {
-        let req = Request {
-            inner: EspRequest { inner: raw_req },
-        };
+// fn adapt<'c, F>(
+//     f: F,
+// ) -> impl for<'r> Fn(
+//     esp_idf_svc::http::server::Request<
+//         &'r mut esp_idf_svc::http::server::EspHttpConnection<'c>
+//     >
+// ) -> anyhow::Result<()>
+// where
+//     F: for<'r> Fn(Request<'r, 'c>) -> anyhow::Result<()>
+//         + Send
+//         + Sync
+//         + 'static,
+// {
+//     move |raw_req| {
+//         let req = Request {
+//             inner: EspRequest { inner: raw_req },
+//         };
 
-        f(req)
-    }
+//         f(req)
+//     }
+// }
+
+
+pub struct EspHttpServer<'s>{
+    server: esp_idf_svc::http::server::EspHttpServer<'s>,
 }
 
-impl<'s> HttpServer for EspHttpServer<'s> {
-    // type Req<'r, 'c> = 
-    // Request<'r, 'c>;
-    // where
-    //     'c: 'r;
-    // fn on<F>(
-    //     &mut self,
-    //     uri: &str,
-    //     method: TMethod,
-    //     handler: F,
-    // ) -> anyhow::Result<()>
-    // where
-    //     // F: for<'r, 'c> Fn(Self::Req<'r, 'c>) -> anyhow::Result<()>
-    //     F: for<'r, 'c> Fn(Request<'r, 'c>) -> anyhow::Result<()>
-    //         + Send
-    //         + Sync
-    //         + 'static,
-
-    fn on(
+impl<'s> EspHttpServer<'s> {
+    pub fn on<F>(
         &mut self,
         uri: &str,
         method: TMethod,
-        handler: Box<Handler>,
+        handler: F,
     ) -> anyhow::Result<()>
+    where
+        F: Send + Sync + 'static,
+        for<'r> F: Fn(Request<'r, 's>) -> anyhow::Result<()>,
     {
-        self.server.fn_handler(
-            uri,
-            to_esp_method(method),
-            // adapt(handler),
-            move |raw_req| {
-                let req = Request {
-                    inner: EspRequest { inner: raw_req },
-                };
+        self.server.fn_handler(uri, to_esp_method(method), move |raw_req| {
+            let req = Request {
+                inner: EspRequest { inner: raw_req },
+            };
 
-                handler(req)
-    }
-        )?;
+            handler(req)
+        })?;
 
         Ok(())
     }
-    
 }
+
+// impl<'s> HttpServer for EspHttpServer<'s> {
+//     type Req<'r> = Request<'r, 's>
+//     where
+//         Self: 'r;
+
+//     fn on<F>(
+//         &mut self,
+//         uri: &str,
+//         method: TMethod,
+//         handler: F,
+//     ) -> anyhow::Result<()>
+//     where
+//         F: Send + Sync + 'static,
+//         for<'r> F: Fn(Self::Req<'r>) -> anyhow::Result<()>,
+//     {
+//         self.server.fn_handler(uri, to_esp_method(method), move |raw_req| {
+//             let req = Request {
+//                 inner: EspRequest { inner: raw_req },
+//             };
+
+//             handler(req)
+//         })?;
+
+//         Ok(())
+//     }
+    
+//     fn init_common_pages<S: HttpServer>(server: &mut S) -> anyhow::Result<()> {
+//         todo!()
+//     }
+// }
+
+// fn adapt<'s, F>(
+//     handler: F,
+// ) -> impl Fn(
+//     esp_idf_svc::http::server::Request<
+//         &'_ mut EspHttpConnection<'s>,
+//     >
+// ) -> anyhow::Result<()>
+// where
+//     F: Send + Sync + 'static,
+//     for<'r> F: Fn(Request<'r, 's>) -> anyhow::Result<()>,
+// {
+//     move |raw_req| {
+//         let req = Request {
+//             inner: EspRequest { inner: raw_req },
+//         };
+
+//         handler(req)
+//     }
+// }
+
+// impl<'s> HttpServer for EspHttpServer<'s> {
+//     type Req<'r> = Request<'r, 's>
+//     where
+//         Self: 'r;
+
+//     fn on<F>(
+//         &mut self,
+//         uri: &str,
+//         method: TMethod,
+//         handler: F,
+//     ) -> anyhow::Result<()>
+//     where
+//         F: Send + Sync + 'static,
+//         F: for<'r> Fn(Self::Req<'r>) -> anyhow::Result<()>,
+//     {
+//         self.server.fn_handler(
+//             uri,
+//             to_esp_method(method),
+//             adapt(handler), // 👈 key
+//         )?;
+
+//         Ok(())
+//     }
+// }
+
+// impl<'s> HttpServer for EspHttpServer<'s> {
+//     type Req<'r> = Request<'r, 's>
+//     where
+//         Self: 'r;
+
+//     fn on<F>(
+//         &mut self,
+//         uri: &str,
+//         method: TMethod,
+//         handler: F,
+//     ) -> anyhow::Result<()>
+//     where
+//         F: Send + Sync + 'static,
+//         for<'r> F: Fn(Self::Req<'r>) -> anyhow::Result<()>,
+//     {
+//         let handler = std::sync::Arc::new(handler);
+
+//         self.server.fn_handler(uri, to_esp_method(method), move |raw_req| {
+//             // raw_req: Request<'r_specific, 's>
+
+//             let req = Request {
+//                 inner: EspRequest { inner: raw_req },
+//             };
+
+//             // This is now valid because F works for ANY 'r
+//             handler(req)
+//         })?;
+
+//         Ok(())
+//     }
+// }
+
+// impl<'s> HttpServer for EspHttpServer<'s> {
+//     type Req<'r> = Request<'r, 's>
+//     where
+//         Self: 'r;
+
+//     fn on<F>(
+//         &mut self,
+//         uri: &str,
+//         method: sparko_embedded_std::http_server::TMethod,
+//         handler: F,
+//     ) -> anyhow::Result<()>
+//     where
+//         F: Send + Sync + 'static,
+//         for<'r> F: Fn(Self::Req<'r>) -> anyhow::Result<()>,
+//         // F: for<'r> Fn(Self::Req<'r>) -> anyhow::Result<()>
+//         //     + Send
+//         //     + Sync
+//         //     + 'static 
+//         {
+//             self.server.fn_handler(uri, to_esp_method(method), move |raw_req| {
+//                 let req = Request {
+//                     inner: EspRequest { inner: raw_req },
+//                 };
+
+//             handler(req)
+//         })?;
+
+//         Ok(())
+//     }
+// }
+
+// impl<'s> HttpServer for EspHttpServer<'s> {
+//     type Req<'r, 'c> = 
+//     Request<'r, 'c>;
+//     where
+//         'c: 'r;
+//     // fn on<F>(
+//     //     &mut self,
+//     //     uri: &str,
+//     //     method: TMethod,
+//     //     handler: F,
+//     // ) -> anyhow::Result<()>
+//     // where
+//     //     // F: for<'r, 'c> Fn(Self::Req<'r, 'c>) -> anyhow::Result<()>
+//     //     F: for<'r, 'c> Fn(Request<'r, 'c>) -> anyhow::Result<()>
+//     //         + Send
+//     //         + Sync
+//     //         + 'static,
+
+//     fn on(
+//         &mut self,
+//         uri: &str,
+//         method: TMethod,
+//         handler: Box<Handler>,
+//     ) -> anyhow::Result<()>
+//     {
+//         self.server.fn_handler(
+//             uri,
+//             to_esp_method(method),
+//             // adapt(handler),
+//             move |raw_req| {
+//                 let req = Request {
+//                     inner: EspRequest { inner: raw_req },
+//                 };
+
+//                 handler(req)
+//     }
+//         )?;
+
+//         Ok(())
+//     }
+    
+// }
 
