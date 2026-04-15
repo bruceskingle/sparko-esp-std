@@ -1,13 +1,13 @@
 use std::io::Write;
 
-use esp_idf_svc::http::Method;
-use esp_idf_svc::http::server::EspHttpConnection;
+
+use esp_idf_svc::http::{Method, server::{EspHttpConnection, EspHttpServer}};
 
 use indexmap::IndexMap;
 use log::info;
 use sparko_embedded_std::{config::{Config, ConfigValue, EnabledState, TypedValue}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
 use url::form_urlencoded;
-use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, esp_http_server::{EspHttpServerManager, HttpServer, Request, Response, TMethod}};
+use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, http::HttpServerManager};
 use crate::config_store::ConfigStore;
 use std::{sync::{Arc, Mutex}};
 
@@ -289,7 +289,7 @@ impl FeatureConfig {
     //     Ok(())
     // }
 
-    fn create_config_page(&self, resp: &mut Response) -> anyhow::Result<()> {
+    fn create_config_page(&self, resp: &mut esp_idf_svc::http::server::Response<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
         info!("Creating config page for feature: {}", &self.name);
         let feature_name = &self.name;
         if let EnabledState::Required = self.enabled {
@@ -621,7 +621,7 @@ impl ConfigManager {
         false
     }
 
-    fn show_config_page(config_manager_clone: &Arc<ConfigManager>, req: Request) -> anyhow::Result<()> {
+    fn show_config_page(config_manager_clone: &Arc<ConfigManager>, req: esp_idf_svc::http::server::Request<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
 
 
             let mut resp = req.into_ok_response()?;
@@ -686,10 +686,10 @@ impl ConfigManager {
             Ok(())
     }
 
-    pub fn create_pages(config_manager: &Arc<Self>, server_manager: &mut EspHttpServerManager) -> anyhow::Result<()> {
+    pub fn create_pages(config_manager: &Arc<Self>, server_manager: &mut HttpServerManager) -> anyhow::Result<()> {
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/config", TMethod::Get, move |req| {
+        server_manager.on("/config", Method::Get, move |req| {
 
             // info!("Received request for / from {}", req.connection().remote_addr());
 
@@ -700,7 +700,7 @@ impl ConfigManager {
 
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/command", TMethod::Post, move |mut req| {
+        server_manager.on("/command", Method::Post, move |mut req| {
             info!("Received {:?} request for {}", req.method(), req.uri());
             
 
@@ -765,7 +765,7 @@ impl ConfigManager {
 
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/update_config", TMethod::Post, move |mut req| {
+        server_manager.on("/update_config", Method::Post, move |mut req| {
 
             // info!("Received request for /connect from {}", req.connection().remote_addr());
 
@@ -803,7 +803,7 @@ impl ConfigManager {
         })?;
 
         let config_manager_clone = config_manager.clone();
-        server_manager.on("/generate_204", TMethod::Get, move |req| {
+        server_manager.on("/generate_204", Method::Get, move |req| {
 
             let ok = config_manager_clone.is_online();
 
@@ -823,7 +823,7 @@ impl ConfigManager {
         })?;
 
         let config_manager_clone = config_manager.clone();
-        server_manager.on("/hotspot-detect.html", TMethod::Get, move |req| {
+        server_manager.on("/hotspot-detect.html", Method::Get, move |req| {
 
             let ok = config_manager_clone.is_online();
 
@@ -849,7 +849,7 @@ impl ConfigManager {
         })?;
 
         let config_manager_clone = config_manager.clone();
-        server_manager.on("/connecttest.txt", TMethod::Get, move |req| {
+        server_manager.on("/connecttest.txt", Method::Get, move |req| {
 
             let ok = config_manager_clone.is_online();
 

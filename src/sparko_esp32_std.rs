@@ -10,15 +10,15 @@ use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Tas
 use std::str::FromStr;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
-use crate::esp_http_server::HttpServer;
 
+use crate::http::HttpServerManager;
 #[cfg(feature = "board-xiao-esp32c6")]
 use crate::led::MonoLedManager;
 #[cfg(feature = "simple-led")]
 use crate::led::SimpleLedManager;
 
 
-use crate::{config::ConfigManagerBuilder, esp_http_server::{EspHttpServerManager, TMethod}, led::LedManager};
+use crate::{config::ConfigManagerBuilder, led::LedManager};
 use crate::{Feature, config::{ConfigManager, SharedConfig}, core::{Core, MDNS_HOSTNAME}, led::RgbLedManager, wifi::WiFiManager};
 
 
@@ -249,7 +249,7 @@ impl SparkoEsp32StdBuilder {
         // }
 
 
-        let mut server_manager = EspHttpServerManager::new()?;
+        let mut server_manager = HttpServerManager::new()?;
 
         server_manager.init_common_pages()?;
         
@@ -259,7 +259,7 @@ impl SparkoEsp32StdBuilder {
         // This should be in the app
 
     let cloned_ap_mode = self.ap_mode.clone();
-    server_manager.on("/", TMethod::Get, move |req| {
+    server_manager.on("/", Method::Get, move |req| {
 
             // info!("Received request for / from {}", req.connection().remote_addr());
 
@@ -347,7 +347,7 @@ pub struct SparkoEsp32Std {
 #[cfg(feature = "simple-led")]
     pub led_manager: SimpleLedManager<'static>,
     pub config_manager: Arc<ConfigManager>,
-    pub server_manager: EspHttpServerManager<'static>,
+    pub server_manager: HttpServerManager<'static>,
     features: Vec<FeatureHolder>,
     pub ap_mode: Arc<Mutex<bool>>,
     // task_manager: TaskManager,
