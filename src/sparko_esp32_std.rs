@@ -6,11 +6,13 @@ use esp_idf_hal::{gpio::PinDriver, ledc::LedcDriver};
 use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method, client::EspHttpConnection, server::EspHttpServer}, nvs::{EspDefaultNvsPartition, EspNvs}, timer::EspTaskTimerService};
 use indexmap::IndexMap;
 use log::{error, info};
+use sparko_embedded_std::config::Config;
 use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
 use std::str::FromStr;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
 
+use crate::config_store::{EspConfigStore, EspConfigStoreFactory};
 use crate::http::HttpServerManager;
 #[cfg(feature = "board-xiao-esp32c6")]
 use crate::led::MonoLedManager;
@@ -19,7 +21,7 @@ use crate::led::SimpleLedManager;
 
 
 use crate::{config::ConfigManagerBuilder, led::LedManager};
-use crate::{Feature, config::{ConfigManager, SharedConfig}, core::{Core, MDNS_HOSTNAME}, led::RgbLedManager, wifi::WiFiManager};
+use crate::{Feature, config::{ConfigManager}, core::{Core, MDNS_HOSTNAME}, led::RgbLedManager, wifi::WiFiManager};
 
 
 use esp_idf_sys::*;
@@ -321,7 +323,7 @@ impl SparkoEsp32StdBuilder {
 
 struct FeatureHolder {
     feature: Box<dyn Feature>,
-    config: SharedConfig,
+    config: Config,
     name: String,
 }
 
@@ -403,7 +405,7 @@ impl SparkoEsp32Std {
         let features = std::mem::take(&mut self.features);
         
         for feature_holder in &features {
-            if feature_holder.config.enabled().is_enabled() {
+            if feature_holder.config.enabled.is_enabled() {
                 match feature_holder.feature.start( self, &mut initializer, &feature_holder.config) {
                     Ok(_) => info!("Started Feature {}", feature_holder.name),
                     Err(error) => error!("FAILED to start Feature {}: {}", feature_holder.name, error),

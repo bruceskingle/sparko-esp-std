@@ -1,8 +1,8 @@
 use chrono::Local;
 use log::info;
-use sparko_embedded_std::{SparkoEmbeddedStd, config::{Config, ConfigValue, TypedValue}, task::Task, tz::TimeZone};
+use sparko_embedded_std::{SparkoEmbeddedStd, config::{Config, ConfigSpec, ConfigSpecValue, TypedValue}, task::Task, tz::TimeZone};
 
-use crate::{Feature, config::{FeatureDescriptor, SharedConfig}, sparko_esp32_std::{SparkoEsp32Std, SparkoEsp32StdInitializer}};
+use crate::{Feature, config::{FeatureDescriptor}, sparko_esp32_std::{SparkoEsp32Std, SparkoEsp32StdInitializer}};
 
 
 pub const CORE_FEATURE_NAME: &str = "core";
@@ -28,11 +28,11 @@ impl Core {
 
 impl Feature for Core {
     fn init(&self, init: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
-        let config = Config::builder()
-            .with(SSID.to_string(), ConfigValue::new(TypedValue::String(SSID_LEN, None), true))?
-            .with(WIFI_PASSWORD.to_string(), ConfigValue::new(TypedValue::String(PASSWORD_LEN, None), true))?
-            .with(MDNS_HOSTNAME.to_string(), ConfigValue::new(TypedValue::String(HOSTNAME_LEN, None), true))?
-            .with(TIMEZONE.to_string(), ConfigValue::new(TypedValue::TimeZone(TimeZone::Utc), true))?
+        let config = ConfigSpec::builder()
+            .with(SSID.to_string(), ConfigSpecValue::new(TypedValue::String(SSID_LEN, None), true))?
+            .with(WIFI_PASSWORD.to_string(), ConfigSpecValue::new(TypedValue::String(PASSWORD_LEN, None), true))?
+            .with(MDNS_HOSTNAME.to_string(), ConfigSpecValue::new(TypedValue::String(HOSTNAME_LEN, None), true))?
+            .with(TIMEZONE.to_string(), ConfigSpecValue::new(TypedValue::TimeZone(TimeZone::Utc), true))?
             .build();
 
 
@@ -42,7 +42,7 @@ impl Feature for Core {
         })
     }
     
-    fn start(&self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &SharedConfig) -> anyhow::Result<()> {
+    fn start(&self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
         let resolve_task = ResolveTask::new(config)?;
         initializer.add_task(Box::new(resolve_task), "0 * * * * *")?;
         Ok(())
@@ -76,7 +76,7 @@ impl Task for ResolveTask {
 }
 
 impl ResolveTask {
-    pub fn new(_config: &SharedConfig) -> anyhow::Result<Self> {
+    pub fn new(_config: &Config) -> anyhow::Result<Self> {
         Ok(Self {
         })
     }

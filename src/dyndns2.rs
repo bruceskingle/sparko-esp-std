@@ -9,11 +9,11 @@ use esp_idf_svc::http::client::EspHttpConnection;
 use log::info;
 use sparko_embedded_std::SparkoEmbeddedStd;
 use sparko_embedded_std::config::Config;
-use sparko_embedded_std::config::ConfigValue;
+use sparko_embedded_std::config::ConfigSpec;
+use sparko_embedded_std::config::ConfigSpecValue;
 use sparko_embedded_std::config::TypedValue;
 use sparko_embedded_std::task::Task;
 
-use crate::config::SharedConfig;
 use crate::sparko_esp32_std::SparkoEsp32Std;
 use crate::sparko_esp32_std::SparkoEsp32StdInitializer;
 use crate::{Feature, FeatureDescriptor};
@@ -74,19 +74,19 @@ impl DynDns2 {
 impl Feature for DynDns2 {
     fn init(&self, initializer: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
         info!("DynDns2::init()");
-        let config = Config::builder()
-            .with(USER_NAME.to_string(), ConfigValue::new(TypedValue::String(32, None), true))?
-            .with(PASSWORD.to_string(), ConfigValue::new(TypedValue::String(32, None), true))?
-            .with(HOSTNAME.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
-            // .with(BASE_SERVICE_URL.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
-            .with(GET_IP_URL.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
-            // .with(GET_REQUIRES_STRIP.to_string(), ConfigValue::new(TypedValue::Bool(false), false))?
-            .with(UPDATE_URL.to_string(), ConfigValue::new(TypedValue::String(64, None), true))?
-            .with(UPDATE_REQUIRES_ADDRESS.to_string(), ConfigValue::new(TypedValue::Bool(false), false ))?
-            .with(SCHEDULE.to_string(), ConfigValue::new(TypedValue::Cron(None), true))?
-            // .with(UPDATE_INTERVAL.to_string(), ConfigValue::new(TypedValue::Int64(Some(3600)), true))?
-            // .with("an_infeasibly_long_name_which_wont_work".to_string(), ConfigValue::new(TypedValue::String(32, None), true))?
-            // .with("test".to_string(), ConfigValue::new(TypedValue::String(42, None), true))?
+        let config = ConfigSpec::builder()
+            .with(USER_NAME.to_string(), ConfigSpecValue::new(TypedValue::String(32, None), true))?
+            .with(PASSWORD.to_string(), ConfigSpecValue::new(TypedValue::String(32, None), true))?
+            .with(HOSTNAME.to_string(), ConfigSpecValue::new(TypedValue::String(64, None), true))?
+            // .with(BASE_SERVICE_URL.to_string(), ConfigSpecValue::new(TypedValue::String(64, None), true))?
+            .with(GET_IP_URL.to_string(), ConfigSpecValue::new(TypedValue::String(64, None), true))?
+            // .with(GET_REQUIRES_STRIP.to_string(), ConfigSpecValue::new(TypedValue::Bool(false), false))?
+            .with(UPDATE_URL.to_string(), ConfigSpecValue::new(TypedValue::String(64, None), true))?
+            .with(UPDATE_REQUIRES_ADDRESS.to_string(), ConfigSpecValue::new(TypedValue::Bool(false), false ))?
+            .with(SCHEDULE.to_string(), ConfigSpecValue::new(TypedValue::Cron(None), true))?
+            // .with(UPDATE_INTERVAL.to_string(), ConfigSpecValue::new(TypedValue::Int64(Some(3600)), true))?
+            // .with("an_infeasibly_long_name_which_wont_work".to_string(), ConfigSpecValue::new(TypedValue::String(32, None), true))?
+            // .with("test".to_string(), ConfigSpecValue::new(TypedValue::String(42, None), true))?
             .build();
         
 
@@ -101,7 +101,7 @@ impl Feature for DynDns2 {
         })
     }
     
-    fn start(&self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &SharedConfig) -> anyhow::Result<()> {
+    fn start(&self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
         let resolve_task = ResolveTask::new(config)?;
         let schedule = config.get_valid(SCHEDULE)?;
         initializer.add_task(Box::new(resolve_task), &schedule)?;
@@ -131,7 +131,7 @@ impl Task for ResolveTask {
 }
 
 impl ResolveTask {
-    pub fn new(config: &SharedConfig) -> anyhow::Result<Self> {
+    pub fn new(config: &Config) -> anyhow::Result<Self> {
         log::info!("Trace 3");
         let host_name = config.get_valid(HOSTNAME)?;
         let user_name = config.get_valid(USER_NAME)?;

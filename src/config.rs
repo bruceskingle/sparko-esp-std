@@ -1,42 +1,19 @@
 use std::io::Write;
 
 
-use esp_idf_svc::http::{Method, server::{EspHttpConnection, EspHttpServer}};
+use esp_idf_svc::http::{Method, server::{EspHttpConnection}};
 
 use indexmap::IndexMap;
 use log::info;
-use sparko_embedded_std::{config::{Config, ConfigValue, EnabledState, TypedValue}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::{config::{Config, ConfigSpec, EnabledState, TypedValue}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::config::ConfigStore;
 use url::form_urlencoded;
 use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, http::HttpServerManager};
-use crate::config_store::ConfigStore;
 use std::{sync::{Arc, Mutex}};
 
 use esp_idf_svc::nvs::*;
 // use crate::http::HttpServerManager;
 use anyhow::anyhow;
-
-// pub trait ConfigSerializable: std::fmt::Debug {
-//     fn to_str(&self) -> &'static str;
-//     fn from_str(&self, s: &str) -> Option<Box<Self>>;
-//     fn iter_strs(&self) -> impl Iterator<Item = &'static str>;
-// }
-
-
-
-
-
-
-
-// impl ConfigValue {
-
-    
-    
-
-//     fn read_from_nvs(&mut self, nvs: &EspNvs<NvsDefault>, name: &str) {
-//         let nv = self.value.read_from_nvs(nvs, name);
-//         self.value = nv;
-//     }
-// }
 
 
 
@@ -44,13 +21,20 @@ use anyhow::anyhow;
 #[derive(Debug)]
 pub struct FeatureDescriptor {
     pub name: String,
-    pub config: Config,
+    pub config: ConfigSpec,
+}
+
+pub struct InnerFeatureConfig {
+    pub enabled: EnabledState,
+    pub config: ConfigSpec,
+}
+
+impl InnerFeatureConfig {
 }
 
 pub struct FeatureConfig {
     pub name: String,
-    pub enabled: EnabledState,
-    pub config: Config,
+    pub inner: Mutex<InnerFeatureConfig>,
     // nvs_namespace: EspNvs<NvsDefault>,
     // problem_manager: Arc<ProblemManager>,
     config_store: EspConfigStore,
@@ -135,6 +119,22 @@ impl FeatureConfig {
     //     Ok(result)
     // }
 
+
+
+    pub fn to_config(&self) -> Config {
+        let mut map = IndexMap::new();
+        let inner = &self.inner.lock().unwrap();
+
+        for (name, spec) in &inner.config.map {
+            map.insert(name.clone(), spec.value.clone());
+        }
+
+        Config {
+            enabled: inner.enabled,
+            map,
+        }
+    }
+
     pub fn from_feature(feature_descriptor: FeatureDescriptor, nvs_partition: EspNvsPartition<NvsDefault>, feature_namespace: &EspNvs<NvsDefault>, internal: bool, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
         let enabled = if internal {
             EnabledState::Required
@@ -162,7 +162,7 @@ impl FeatureConfig {
         Self::new(feature_descriptor.name, enabled, feature_descriptor.config, nvs_partition, problem_manager)
     }
 
-    pub fn new(name: String, enabled: EnabledState, mut config: Config, nvs_partition: EspNvsPartition<NvsDefault>, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
+    pub fn new(name: String, enabled: EnabledState, mut config: ConfigSpec, nvs_partition: EspNvsPartition<NvsDefault>, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
 
         let nvs_namespace = EspNvs::new(nvs_partition, &name, true)?;
 
@@ -193,8 +193,7 @@ impl FeatureConfig {
 
         let feature_config = Self {
             name,
-            enabled,
-            config,
+            inner: Mutex::new(InnerFeatureConfig { enabled, config }),
             // nvs_namespace,
             // problem_manager: problem_manager.clone(),
             config_store,
@@ -205,8 +204,9 @@ impl FeatureConfig {
 
     pub fn is_valid(&self) -> bool {
         info!("Validating config for feature: {}", self.name);
-        if self.enabled.is_enabled() {
-            for (name, config_value) in &self.config.map {
+        let inner = &self.inner.lock().unwrap();
+        if inner.enabled.is_enabled() {
+            for (name, config_value) in &inner.config.map {
                 if config_value.required && config_value.value.is_none() {
                     log::error!("Missing required config value: {} in feature {}", name, self.name);
                     return false;
@@ -292,14 +292,15 @@ impl FeatureConfig {
     fn create_config_page(&self, resp: &mut esp_idf_svc::http::server::Response<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
         info!("Creating config page for feature: {}", &self.name);
         let feature_name = &self.name;
-        if let EnabledState::Required = self.enabled {
+        let inner = &self.inner.lock().unwrap();
+        if let EnabledState::Required = inner.enabled {
             // Required features are always enabled, so we just show the config page without a checkbox
         }
         else {
-            info!("feature.enabled for {}: {}", &self.name, self.enabled.is_enabled());
+            info!("feature.enabled for {}: {}", &self.name, inner.enabled.is_enabled());
 
             let name = format!("feature_{}", &self.name);
-            let checked = if self.enabled.is_enabled() {
+            let checked = if inner.enabled.is_enabled() {
                 " checked"
             } else {
                 ""
@@ -312,7 +313,7 @@ impl FeatureConfig {
             "#).as_bytes())?;
         }
 
-        for (name, config_value) in &self.config.map {
+        for (name, config_value) in &inner.config.map {
             let value = config_value.value.to_string();
             let input_type_buf: String;
             let input_type = match &config_value.value {
@@ -376,9 +377,10 @@ impl FeatureConfig {
         Ok(())
     }
 
-    pub fn handle_config_form(&mut self, form: &IndexMap<String, String>, feature_namespace: &EspNvs<NvsDefault>) -> anyhow::Result<()> {
+    pub fn handle_config_form(&self, form: &IndexMap<String, String>, feature_namespace: &EspNvs<NvsDefault>) -> anyhow::Result<()> {
         info!("Handling config form for feature: {}", self.name);
-        if let EnabledState::Required = self.enabled {
+        let mut inner = self.inner.lock().unwrap();
+        if let EnabledState::Required = inner.enabled {
             // Required features are always enabled, so we just show the config page without a checkbox
         }
         else {
@@ -386,11 +388,11 @@ impl FeatureConfig {
             let str_val = form.get(&name).map(|s| s.as_str()).unwrap_or("").trim();
             let enabled = str_val == "on";
             info!("Feature {} enabled value from form: {} -> enabled={}", &self.name, str_val, enabled);
-            self.enabled = EnabledState::from(enabled);
+            inner.enabled = EnabledState::from(enabled);
                 feature_namespace.set_u8(&self.name, if enabled { 1 } else { 0 })?;
         }
 
-        for (name, config_value) in self.config.map.iter_mut() {
+        for (name, config_value) in inner.config.map.iter_mut() {
             info!("Processing config value: {}", name);
             let str_val = form.get(name).map(|s| s.as_str()).unwrap_or("").trim();
             if str_val.len() == 0 {
@@ -405,39 +407,39 @@ impl FeatureConfig {
             }
         }
 
-        info!("Finished handling form config: {:?}", &self.config);
+        info!("Finished handling form config: {:?}", &inner.config);
 
         Ok(())
     }
 }
 
 
-#[derive(Clone)]
-pub struct SharedConfig(Arc<Mutex<FeatureConfig>>);
+// #[derive(Clone)]
+// pub struct SharedConfig(Arc<Mutex<FeatureConfig>>);
 
-impl SharedConfig {
+// impl SharedConfig {
 
-    pub fn new(feature_config: FeatureConfig) -> Self {
-        SharedConfig(Arc::new(Mutex::new(feature_config)))
-    }
+//     pub fn new(feature_config: FeatureConfig) -> Self {
+//         SharedConfig(Arc::new(Mutex::new(feature_config)))
+//     }
 
-    pub fn get_valid(&self, key: &str) -> anyhow::Result<String> {
-        self.0.lock().unwrap().config.get_valid(key)
-    }
+//     pub fn get_valid(&self, key: &str) -> anyhow::Result<String> {
+//         self.0.lock().unwrap().config.get_valid(key)
+//     }
 
-    pub fn enabled(&self) -> EnabledState {
-        self.0.lock().unwrap().enabled
-    }
+//     pub fn enabled(&self) -> EnabledState {
+//         self.0.lock().unwrap().enabled
+//     }
 
-    pub fn lock(&self) -> std::sync::MutexGuard<'_, FeatureConfig> {
-        self.0.lock().unwrap()
-    }
-}
+//     pub fn lock(&self) -> std::sync::MutexGuard<'_, FeatureConfig> {
+//         self.0.lock().unwrap()
+//     }
+// }
 
 
 pub struct ConfigManagerBuilder {
     nvs_partition: EspNvsPartition<NvsDefault>,
-    features: IndexMap<String, SharedConfig>,
+    features: IndexMap<String, FeatureConfig>,
     feature_namespace: EspNvs<NvsDefault>,
     // failure_reason: Arc<Mutex<Option<String>>>,
     problem_manager: Arc<ProblemManager>,
@@ -451,7 +453,7 @@ impl ConfigManagerBuilder {
         problem_manager: Arc<ProblemManager>,
         ap_mode: Arc<Mutex<bool>>) -> anyhow::Result<Self>
     {
-        let features: IndexMap<String, SharedConfig> = IndexMap::new();
+        let features: IndexMap<String, FeatureConfig> = IndexMap::new();
         let feature_namespace = EspNvs::new(nvs_partition.clone(), FEATURE_NAMESPACE_NAME, true)?;
 
         Ok(Self {
@@ -464,15 +466,14 @@ impl ConfigManagerBuilder {
         })
     }
 
-    pub fn add_feature(&mut self, descriptor: FeatureDescriptor, internal: bool) -> anyhow::Result<SharedConfig> {
+    pub fn add_feature(&mut self, descriptor: FeatureDescriptor, internal: bool) -> anyhow::Result<Config> {
         log::info!("About to create config for feature: {}", &descriptor.name);
         let feature_config = FeatureConfig::from_feature(descriptor, self.nvs_partition.clone(), &self.feature_namespace, internal, &self.problem_manager)?;
         let feature_name = feature_config.name.clone();
-
+        let config = feature_config.to_config();
         log::info!("Added feature: {}", &feature_name);
 
-        let feature_mutex = SharedConfig::new(feature_config);
-        self.features.insert(feature_name, feature_mutex.clone());
+        self.features.insert(feature_name, feature_config);
 
         log::info!("List ConfigManager:");
         for name in self.features.keys() {
@@ -480,7 +481,7 @@ impl ConfigManagerBuilder {
         }
         log::info!("END List ConfigManager:");
 
-        Ok(feature_mutex)
+        Ok(config)
     }
 
     pub fn build(self) -> ConfigManager {
@@ -497,7 +498,7 @@ impl ConfigManagerBuilder {
 
 pub struct ConfigManager {
     nvs_partition: EspNvsPartition<NvsDefault>,
-    pub features: IndexMap<String, SharedConfig>,
+    pub features: IndexMap<String, FeatureConfig>,
     feature_namespace: EspNvs<NvsDefault>,
     // pub failure_reason: Arc<Mutex<Option<String>>>,
     problem_manager: Arc<ProblemManager>,
@@ -565,8 +566,8 @@ impl ConfigManager {
     }
 
     pub fn set_system_timezone(&self) -> anyhow::Result<()> {
-        let locked_config = self.features.get(CORE_FEATURE_NAME).unwrap().lock();
-        let opt_config = locked_config.config.map.get(TIMEZONE);
+        let inner = self.features.get(CORE_FEATURE_NAME).unwrap().inner.lock().unwrap();
+        let opt_config = &inner.config.map.get(TIMEZONE);
         if let Some(config) = opt_config {
             if let TypedValue::TimeZone(tz) = config.value {
                 Self::set_as_system_timezone(&tz);
@@ -582,7 +583,8 @@ impl ConfigManager {
     }
 
     pub fn get_valid_core_config(&self, key: &str) -> anyhow::Result<String> {
-        if let Some(value) = self.features.get(CORE_FEATURE_NAME).unwrap().lock().config.map.get(key) {
+        let inner = self.features.get(CORE_FEATURE_NAME).unwrap().inner.lock().unwrap();
+        if let Some(value) = inner.config.map.get(key) {
             Ok(value.value.to_string())
         }
         else {
@@ -591,8 +593,7 @@ impl ConfigManager {
     }
 
     pub fn is_valid(&self) -> bool {
-        for (_feature_name, feature_config_mutex) in &self.features {
-            let feature_config = feature_config_mutex.lock();
+        for (_feature_name, feature_config) in &self.features {
             if ! feature_config.is_valid() {
                 return false;
             }
@@ -613,8 +614,7 @@ impl ConfigManager {
             log::info!("Current feature in ConfigManager: {}", name);
         }
         log::info!("END List ConfigManager:");
-        if let Some(core_feature_mutex) = self.features.get(CORE_FEATURE_NAME) {
-            let core_feature = core_feature_mutex.lock();
+        if let Some(core_feature) = self.features.get(CORE_FEATURE_NAME) {
             return core_feature.is_valid();
         }
         log::info!("Core feature not found");
@@ -663,8 +663,7 @@ impl ConfigManager {
             resp.write(r#"
                         <h1>ESP32 Setup</h1>
                         <form method="POST" action="/update_config">"#.as_bytes())?;
-            for (_feature_name, feature_config_mutex) in &config_manager_clone.features {
-                let feature_config = feature_config_mutex.lock();
+            for (_feature_name, feature_config) in &config_manager_clone.features {
                 feature_config.create_config_page(&mut resp)?;
             }
 
@@ -686,7 +685,7 @@ impl ConfigManager {
             Ok(())
     }
 
-    pub fn create_pages(config_manager: &Arc<Self>, server_manager: &mut HttpServerManager) -> anyhow::Result<()> {
+    pub fn create_pages(config_manager: &Arc<ConfigManager>, server_manager: &mut HttpServerManager) -> anyhow::Result<()> {
         let config_manager_clone = config_manager.clone();
 
         server_manager.on("/config", Method::Get, move |req| {
@@ -872,8 +871,7 @@ impl ConfigManager {
 
     pub fn erase_config(&self) -> anyhow::Result<()> {
         info!("Erasing config");
-        if let Some(core_feature_mutex) = self.features.get(CORE_FEATURE_NAME) {
-            let core_feature = core_feature_mutex.lock();
+        if let Some(core_feature) = self.features.get(CORE_FEATURE_NAME) {
             core_feature.config_store.erase_all()?;
         }
         Ok(())
@@ -885,7 +883,7 @@ impl ConfigManager {
         // Self::handle_config_form_feature(&mut self.nvs, form, None, &mut self.system_config.core_config)?;
 
         for (_feature_name, feature_config) in &self.features {
-            feature_config.lock().handle_config_form(form, &self.feature_namespace)?;
+            feature_config.handle_config_form(form, &self.feature_namespace)?;
         }
 
         // info!("Finished handling config form submission current config: {:?}", self.system_config);

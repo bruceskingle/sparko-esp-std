@@ -1,4 +1,6 @@
-use crate::config::{FeatureDescriptor, SharedConfig};
+use sparko_embedded_std::config::Config;
+
+use crate::config::{FeatureDescriptor};
 
 
 
@@ -20,7 +22,7 @@ pub mod dyndns2;
 
 pub trait Feature {
     fn init(&self, init: &mut sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> ;
-    fn start(&self, sparko: &mut sparko_esp32_std::SparkoEsp32Std, initializer: &mut sparko_esp32_std::SparkoEsp32StdInitializer, config: &SharedConfig) -> anyhow::Result<()>;
+    fn start(&self, sparko: &mut sparko_esp32_std::SparkoEsp32Std, initializer: &mut sparko_esp32_std::SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()>;
 }
 
 pub trait FeatureConfig {

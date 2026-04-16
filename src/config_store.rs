@@ -2,19 +2,40 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use croner::Cron;
-use esp_idf_svc::nvs::{EspNvs, NvsDefault};
+use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
 use log::info;
-use sparko_embedded_std::{config::{ConfigValue, TypedValue}, problem::ProblemManager, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::{config::{ConfigSpecValue, ConfigStore, ConfigStoreFactory, TypedValue}, problem::ProblemManager, tz::{TIMEZONE_LEN, TimeZone}};
 
 
-
-
-pub trait ConfigStore {
-    fn erase_all(&self) -> anyhow::Result<()>;
-    fn load(&self, name: &str, config_value: &mut ConfigValue);
-    fn save(&self, name: &str, config_value: &mut ConfigValue, str_value: &str) -> anyhow::Result<()>;
-    fn remove(&self, name: &str, config_value: &mut ConfigValue) -> anyhow::Result<()>;
+pub struct EspConfigStoreFactory {
+    nvs_partition: EspNvsPartition<NvsDefault>, 
+    problem_manager: Arc<ProblemManager>,
 }
+
+impl EspConfigStoreFactory {
+    pub fn new(
+        nvs_partition: EspNvsPartition<NvsDefault>, 
+        problem_manager: Arc<ProblemManager>
+    ) -> Self
+    {
+        EspConfigStoreFactory{
+            nvs_partition, 
+            problem_manager,
+        }
+    }
+}
+
+impl ConfigStoreFactory for EspConfigStoreFactory {
+    fn create(&self, name: &str) -> anyhow::Result<impl ConfigStore> {
+        let nvs_namespace = EspNvs::new(self.nvs_partition.clone(), &name, true)?;
+
+        Ok(EspConfigStore {
+            nvs_namespace,
+            problem_manager: self.problem_manager.clone(),
+        })
+    }
+}
+
 
 pub struct EspConfigStore {
     pub nvs_namespace: EspNvs<NvsDefault>,
@@ -23,7 +44,7 @@ pub struct EspConfigStore {
 
 impl EspConfigStore {
 
-    fn unwrap_and_log_esp<T>(&self, name: &str, config_value: &mut ConfigValue, result: Result<Option<T>, esp_idf_sys::EspError>) -> Option<T> {
+    fn unwrap_and_log_esp<T>(&self, name: &str, config_value: &mut ConfigSpecValue, result: Result<Option<T>, esp_idf_sys::EspError>) -> Option<T> {
                 match result {
                     Ok(opt_str) => {
                         if opt_str.is_none() && config_value.required {
@@ -44,7 +65,7 @@ impl EspConfigStore {
                 }
     }
 
-    fn unwrap_and_log_cron<T>(&self, name: &str, config_value: &mut ConfigValue, result: Result<T, croner::errors::CronError>) -> Option<T> {
+    fn unwrap_and_log_cron<T>(&self, name: &str, config_value: &mut ConfigSpecValue, result: Result<T, croner::errors::CronError>) -> Option<T> {
                 match result {
                     Ok(opt_str) => {
 
@@ -66,7 +87,7 @@ impl ConfigStore for EspConfigStore {
         self.nvs_namespace.erase_all()?;
         Ok(())
     }
-    fn load(&self, name: &str, config_value: &mut ConfigValue) {
+    fn load(&self, name: &str, config_value: &mut ConfigSpecValue) {
         info!("Reading config value {} from NVS", name);
         let result = match &config_value.value {
             TypedValue::String(len_ref, _) => {
@@ -116,7 +137,7 @@ impl ConfigStore for EspConfigStore {
         config_value.value = result;
     }
 
-    fn save(&self, name: &str, config_value: &mut ConfigValue, str_val: &str) -> anyhow::Result<()> {
+    fn save(&self, name: &str, config_value: &mut ConfigSpecValue, str_val: &str) -> anyhow::Result<()> {
         
                 log::info!("Config value {} is {}", name, str_val);
                 match config_value.value.from_str(str_val) {
@@ -179,7 +200,7 @@ impl ConfigStore for EspConfigStore {
                 }
     }
     
-    fn remove(&self, name: &str, config_value: &mut ConfigValue) -> anyhow::Result<()> {
+    fn remove(&self, name: &str, config_value: &mut ConfigSpecValue) -> anyhow::Result<()> {
         self.nvs_namespace.remove(name)?;
         config_value.value = config_value.value.to_none();
         if config_value.required {
