@@ -1,6 +1,7 @@
 {
     "rust-analyzer.cargo.features": ["board-cyd"],
     "cSpell.words": [
+        "connecttest",
         "eventloop"
     ]
 }

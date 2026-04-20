@@ -518,46 +518,6 @@ impl ConfigManager {
         ConfigManagerBuilder::new(nvs_partition, problem_manager, ap_mode)
     }
 
-    // pub fn new(nvs_partition: EspNvsPartition<NvsDefault>, 
-    //     failure_reason: Arc<Mutex<Option<String>>>, 
-    //     ap_mode: Arc<Mutex<bool>>) -> anyhow::Result<ConfigManager> {
-
-        
-    //     // // let core_descriptor = core.create_descriptor()?;
-
-    //     // // let mut core_config = Config::new();
-
-    //     // // core_config.insert(SSID.to_string(), ConfigValue { value: TypedValue::String(SSID_LEN, None), required: true })?;
-    //     // // core_config.insert(WIFI_PASSWORD.to_string(), ConfigValue { value: TypedValue::String(PASSWORD_LEN, None), required: true })?;
-    //     // // core_config.insert(MDNS_HOSTNAME.to_string(), ConfigValue { value: TypedValue::String(HOSTNAME_LEN, None), required: true })?;
-    //     // // core_config.insert(TIMEZONE.to_string(), ConfigValue { value: TypedValue::TimeZone(TimeZone::Utc), required: true })?;
-
-    //     // // let core_namespace = EspNvs::new(nvs_partition, "core", true)?;
-    //     // let core_feature_config = FeatureConfig::new(
-    //     //     core_descriptor.name.clone(),
-    //     //     EnabledState::Required,
-    //     //     core_descriptor.config,
-    //     //     nvs_partition.clone(),
-    //     // )?;
-        
-    //     // features.insert(core_descriptor.name, Mutex::new(core_feature_config));
-        
-    //     // for feature in p_features {
-    //     //     let feature_config = FeatureConfig::from_feature(feature, nvs_partition.clone(), &feature_namespace)?;
-    //     //     features.insert(feature_config.name.clone(), Mutex::new(feature_config));
-    //     // }
-        
-        
-
-    //     Ok(ConfigManager {
-    //         nvs_partition,
-    //         features,
-    //         feature_namespace,
-    //         failure_reason,
-    //         ap_mode,
-    //     })
-    // }
-
 
     fn set_as_system_timezone(time_zone: &TimeZone) {
         let tz = std::ffi::CString::new(time_zone.to_posix_tz()).unwrap();
@@ -698,37 +658,9 @@ impl ConfigManager {
             Self::show_config_page(&config_manager_clone, resp)
         }))?;
 
-        // server_manager.on("/config", Method::Get, move |req| {
-        
-
-        //     // info!("Received request for / from {}", req.connection().remote_addr());
-
-        //     info!("Received {:?} request for {}", req.method(), req.uri());
-
-        //     Self::show_config_page(&config_manager_clone, req)
-        // })?;
-
         let config_manager_clone = config_manager.clone();
 
         server_manager.handle_post_form("/command", Box::new(move |mut resp, form| {
-            // info!("Received {:?} request for {}", req.method(), req.uri());
-            
-
-            // let mut body = Vec::new();
-            // let mut buf = [0u8; 256];
-
-            // loop {
-            //     let read = req.read(&mut buf)?;
-            //     if read == 0 {
-            //         break;
-            //     }
-            //     body.extend_from_slice(&buf[..read]);
-            // }
-
-            // let form = form_urlencoded::parse(&body)
-            //     .into_owned()
-            //     .collect::<IndexMap<String, String>>();
-
             let command =form.get("command");
             match command.map(|s| s.as_str()) {
                 Some("restart") => {
@@ -771,205 +703,9 @@ impl ConfigManager {
         let config_manager_clone = config_manager.clone();
 
         server_manager.handle_post_form("/update_config", Box::new(move | resp, form | {
-
-            // info!("Received request for /connect from {}", req.connection().remote_addr());
-
-            // info!("Received {:?} request for {}", req.method(), req.uri());
-            
-
-            // let mut body = Vec::new();
-            // let mut buf = [0u8; 256];
-
-            // loop {
-            //     let read = req.read(&mut buf)?;
-            //     if read == 0 {
-            //         break;
-            //     }
-            //     body.extend_from_slice(&buf[..read]);
-            // }
-
-            // let form = form_urlencoded::parse(&body)
-            //     .into_owned()
-            //     .collect::<IndexMap<String, String>>();
-
-            // config_manager_clone.handle_config_form(&form)?;
-
-            // let mut resp = WriteWrapper{
-            //     resp: req.into_ok_response()?,
-            // };
-
+            config_manager_clone.handle_config_form(&form)?;
             Self::show_config_page(&config_manager_clone, resp)
-
-            // let mut resp = req.into_ok_response()?;
-            // resp.write(b"Saved!. Rebooting...(NOT)")?;
-
-            // // std::thread::spawn(|| {
-            // //     std::thread::sleep(std::time::Duration::from_secs(2));
-            // //     unsafe { esp_idf_sys::esp_restart(); }
-            // // });
-
-            // Ok(())
         }))?;
-
-        // let config_manager_clone = config_manager.clone();
-        // server_manager.responder("/generate_204", HttpMethod::Get, Box::new(|| {
-        //     let ok = config_manager_clone.is_online();
-
-        //     if ok {
-        //         Ok(Responder {
-        //             status: 200,
-        //             message: None,
-        //             headers: &[],
-        //             f: Box::new(|resp| {
-        //                 resp.write(b"<HTML><BODY>Success</BODY></HTML>")?;
-        //                 Ok(())
-        //             }),
-        //         })
-        //     } else {
-        //         Ok(Responder {
-        //             status: 302,
-        //             message: None,
-        //             headers: &[("Location", "/config")],
-        //             f: Box::new(|resp| {
-        //                 resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
-        //                 Ok(())
-        //             }),
-        //         })
-        //     }
-        // }))?;
-
-        // // server_manager.handle("/generate_204", HttpMethod::Get, Box::new(move |resp| {
-
-        // //     let ok = config_manager_clone.is_online();
-
-        // //     // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
-
-        // //     info!("Received {:?} request for {} configured={}", req.method(), req.uri(), ok);
-            
-            
-        // //     if ok { 
-        // //         let mut resp = req.into_ok_response()?;        
-        // //         resp.write(b"<HTML><BODY>Success</BODY></HTML>")?;
-        // //     } else {
-        // //         let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
-        // //         resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
-        // //     }
-        // //     Ok(())
-        // // }))?;
-
-    //     let config_manager_clone = config_manager.clone();
-    //     server_manager.responder(
-    //         "/hotspot-detect.html", 
-    //         HttpMethod::Get, 
-    //         Box::new(|| {
-    //             let ok = config_manager_clone.is_online();
-
-    //         if ok {
-    //             Ok(Responder {
-    //                 status: 200,
-    //                 message: None,
-    //                 headers: &[],
-    //                 f: Box::new(|resp| {
-    //                     resp.write(b"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2//EN\">
-    // <HTML>
-    // <HEAD>
-    //     <TITLE>Success</TITLE>
-    // </HEAD>
-    // <BODY>
-    //     Success
-    // </BODY>
-    // </HTML>")?;
-    //                     Ok(())
-    //                 }),
-    //             })
-    //         } else {
-    //             Ok(Responder {
-    //                 status: 302,
-    //                 message: None,
-    //                 headers: &[("Location", "/config")],
-    //                 f: Box::new(|resp| {
-    //                     resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
-    //                     Ok(())
-    //                 }),
-    //             })
-    //         }
-    //         })
-    //     )?;
-
-
-//         server_manager.old_on("/hotspot-detect.html", Method::Get, move |req| {
-
-//             let ok = config_manager_clone.is_online();
-
-//             // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
-
-//             info!("Received {:?} request for {} configured={} V2", req.method(), req.uri(), ok);
-            
-//             if ok {  
-//                 let mut resp = req.into_ok_response()?;       
-//                 resp.write(b"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2//EN\">
-// <HTML>
-// <HEAD>
-// 	<TITLE>Success</TITLE>
-// </HEAD>
-// <BODY>
-// 	Success
-// </BODY>
-// </HTML>")?;
-//             } else {let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
-//                 resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
-//             }
-//             Ok(())
-//         })?;
-
-        // let config_manager_clone = config_manager.clone();
-        // server_manager.responder(
-        //     "/connecttest.txt", 
-        //     HttpMethod::Get, 
-        //     Box::new(|| {
-        //         let ok = config_manager_clone.is_online();
-
-        //     if ok {
-        //         Ok(Responder {
-        //             status: 200,
-        //             message: None,
-        //             headers: &[],
-        //             f: Box::new(|resp| {
-        //                 resp.write(b"Microsoft Connect Test")?;
-        //                 Ok(())
-        //             }),
-        //         })
-        //     } else {
-        //         Ok(Responder {
-        //             status: 302,
-        //             message: None,
-        //             headers: &[("Location", "/config")],
-        //             f: Box::new(|resp| {
-        //                 resp.write(b"Not configured")?;
-        //                 Ok(())
-        //             }),
-        //         })
-        //     }
-        //     })
-        // )?;
-
-        // server_manager.old_on("/connecttest.txt", Method::Get, move |req| {
-
-        //     let ok = config_manager_clone.is_online();
-
-        //     // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
-
-        //     info!("Received {:?} request for {} configured={}", req.method(), req.uri(), ok);
-            
-        //     if ok {  
-        //         let mut resp = req.into_ok_response()?;       
-        //         resp.write(b"Microsoft Connect Test")?;
-        //     } else {
-        //         let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
-        //         resp.write(b"Not configured")?;
-        //     }
-        //     Ok(())
-        // })?;
 
         Ok(())
     }
@@ -984,14 +720,9 @@ impl ConfigManager {
 
     pub fn handle_config_form(&self, form: &IndexMap<String, String>) -> anyhow::Result<()> {
         info!("Handling config form submission: {:?}", form);
-
-        // Self::handle_config_form_feature(&mut self.nvs, form, None, &mut self.system_config.core_config)?;
-
         for (_feature_name, feature_config) in &self.features {
             feature_config.handle_config_form(form, &self.feature_namespace)?;
         }
-
-        // info!("Finished handling config form submission current config: {:?}", self.system_config);
         Ok(())
     }
 }
