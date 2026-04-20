@@ -5,10 +5,10 @@ use esp_idf_svc::http::{Method, server::{EspHttpConnection}};
 
 use indexmap::IndexMap;
 use log::info;
-use sparko_embedded_std::{config::{Config, ConfigSpec, EnabledState, TypedValue}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::{config::{Config, ConfigSpec, EnabledState, TypedValue}, http_server::{HttpMethod, HttpServerManager}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
 use sparko_embedded_std::config::ConfigStore;
 use url::form_urlencoded;
-use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, http::HttpServerManager};
+use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, http::{EspHttpServerManager, WriteWrapper}};
 use std::{sync::{Arc, Mutex}};
 
 use esp_idf_svc::nvs::*;
@@ -289,7 +289,10 @@ impl FeatureConfig {
     //     Ok(())
     // }
 
-    fn create_config_page(&self, resp: &mut esp_idf_svc::http::server::Response<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
+    fn create_config_page(&self, 
+        resp: &mut dyn std::io::Write
+        //&mut esp_idf_svc::http::server::Response<&mut EspHttpConnection<'_>>
+    ) -> anyhow::Result<()> {
         info!("Creating config page for feature: {}", &self.name);
         let feature_name = &self.name;
         let inner = &self.inner.lock().unwrap();
@@ -621,10 +624,13 @@ impl ConfigManager {
         false
     }
 
-    fn show_config_page(config_manager_clone: &Arc<ConfigManager>, req: esp_idf_svc::http::server::Request<&mut EspHttpConnection<'_>>) -> anyhow::Result<()> {
+    fn show_config_page(config_manager_clone: &Arc<ConfigManager>, 
+        resp: &mut dyn Write
+        //esp_idf_svc::http::server::Request<&mut EspHttpConnection<'_>>
+        ) -> anyhow::Result<()> {
 
 
-            let mut resp = req.into_ok_response()?;
+            // let mut resp = req.into_ok_response()?;
             resp.write(r#"
                 <!DOCTYPE html>
                 <html lang="en">
@@ -664,7 +670,7 @@ impl ConfigManager {
                         <h1>ESP32 Setup</h1>
                         <form method="POST" action="/update_config">"#.as_bytes())?;
             for (_feature_name, feature_config) in &config_manager_clone.features {
-                feature_config.create_config_page(&mut resp)?;
+                feature_config.create_config_page(resp)?;
             }
 
             
@@ -685,44 +691,48 @@ impl ConfigManager {
             Ok(())
     }
 
-    pub fn create_pages(config_manager: &Arc<ConfigManager>, server_manager: &mut HttpServerManager) -> anyhow::Result<()> {
+    pub fn create_pages(config_manager: &Arc<ConfigManager>, server_manager: &mut dyn HttpServerManager) -> anyhow::Result<()> {
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/config", Method::Get, move |req| {
+        server_manager.handle("/config", HttpMethod::Get, Box::new(move |resp| {
+            Self::show_config_page(&config_manager_clone, resp)
+        }))?;
 
-            // info!("Received request for / from {}", req.connection().remote_addr());
+        // server_manager.on("/config", Method::Get, move |req| {
+        
 
-            info!("Received {:?} request for {}", req.method(), req.uri());
+        //     // info!("Received request for / from {}", req.connection().remote_addr());
 
-            Self::show_config_page(&config_manager_clone, req)
-        })?;
+        //     info!("Received {:?} request for {}", req.method(), req.uri());
+
+        //     Self::show_config_page(&config_manager_clone, req)
+        // })?;
 
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/command", Method::Post, move |mut req| {
-            info!("Received {:?} request for {}", req.method(), req.uri());
+        server_manager.handle_post_form("/command", Box::new(move |mut resp, form| {
+            // info!("Received {:?} request for {}", req.method(), req.uri());
             
 
-            let mut body = Vec::new();
-            let mut buf = [0u8; 256];
+            // let mut body = Vec::new();
+            // let mut buf = [0u8; 256];
 
-            loop {
-                let read = req.read(&mut buf)?;
-                if read == 0 {
-                    break;
-                }
-                body.extend_from_slice(&buf[..read]);
-            }
+            // loop {
+            //     let read = req.read(&mut buf)?;
+            //     if read == 0 {
+            //         break;
+            //     }
+            //     body.extend_from_slice(&buf[..read]);
+            // }
 
-            let form = form_urlencoded::parse(&body)
-                .into_owned()
-                .collect::<IndexMap<String, String>>();
+            // let form = form_urlencoded::parse(&body)
+            //     .into_owned()
+            //     .collect::<IndexMap<String, String>>();
 
             let command =form.get("command");
             match command.map(|s| s.as_str()) {
                 Some("restart") => {
                     info!("Restart command received, restarting...");
-                    let mut resp = req.into_ok_response()?;
                     resp.write(b"<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"5;url=/\" /><title>Restarting</title></head><body><p>Device restarting, redirecting to root in 5 seconds...</p><script>setTimeout(()=>{window.location.href='/';},5000);</script></body></html>")?;
 
                     std::thread::spawn(|| {
@@ -734,11 +744,9 @@ impl ConfigManager {
                     info!("Factory reset command received, erasing config and restarting...");
                     if let Err(e) = config_manager_clone.erase_config() {
                         log::error!("Failed to erase config: {}", e);
-                        let mut resp = req.into_ok_response()?;
                         resp.write(b"<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"5;url=/\" /><title>Factory reset failed</title></head><body><p>Failed to erase config.</p><script>setTimeout(()=>{window.location.href='/';},5000);</script></body></html>")?;
                     }
                     else {
-                        let mut resp = req.into_ok_response()?;
                         resp.write(b"<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"5;url=/\" /><title>Factory reset</title></head><body><p>Config erased. Device restarting, redirecting to root in 5 seconds...</p><script>setTimeout(()=>{window.location.href='/';},5000);</script></body></html>")?;
                     
                         std::thread::spawn(|| {
@@ -749,46 +757,48 @@ impl ConfigManager {
                 },
                 Some(cmd) => {
                     log::warn!("Unknown command received: {}", cmd);
-                        let mut resp = req.into_ok_response()?;
                         resp.write(format!("Unknown command received: {}", cmd).as_bytes())?;
                 },
                 None => {
                     log::warn!("No command received in form");
-                        let mut resp = req.into_ok_response()?;
                         resp.write(b"No command received in form")?;
                 }
             }
 
             Ok(())
-        })?;
+        }))?;
 
         let config_manager_clone = config_manager.clone();
 
-        server_manager.on("/update_config", Method::Post, move |mut req| {
+        server_manager.handle_post_form("/update_config", Box::new(move | resp, form | {
 
             // info!("Received request for /connect from {}", req.connection().remote_addr());
 
-            info!("Received {:?} request for {}", req.method(), req.uri());
+            // info!("Received {:?} request for {}", req.method(), req.uri());
             
 
-            let mut body = Vec::new();
-            let mut buf = [0u8; 256];
+            // let mut body = Vec::new();
+            // let mut buf = [0u8; 256];
 
-            loop {
-                let read = req.read(&mut buf)?;
-                if read == 0 {
-                    break;
-                }
-                body.extend_from_slice(&buf[..read]);
-            }
+            // loop {
+            //     let read = req.read(&mut buf)?;
+            //     if read == 0 {
+            //         break;
+            //     }
+            //     body.extend_from_slice(&buf[..read]);
+            // }
 
-            let form = form_urlencoded::parse(&body)
-                .into_owned()
-                .collect::<IndexMap<String, String>>();
+            // let form = form_urlencoded::parse(&body)
+            //     .into_owned()
+            //     .collect::<IndexMap<String, String>>();
 
-            config_manager_clone.handle_config_form(&form)?;
+            // config_manager_clone.handle_config_form(&form)?;
 
-            Self::show_config_page(&config_manager_clone, req)
+            // let mut resp = WriteWrapper{
+            //     resp: req.into_ok_response()?,
+            // };
+
+            Self::show_config_page(&config_manager_clone, resp)
 
             // let mut resp = req.into_ok_response()?;
             // resp.write(b"Saved!. Rebooting...(NOT)")?;
@@ -799,72 +809,167 @@ impl ConfigManager {
             // // });
 
             // Ok(())
-        })?;
+        }))?;
 
-        let config_manager_clone = config_manager.clone();
-        server_manager.on("/generate_204", Method::Get, move |req| {
+        // let config_manager_clone = config_manager.clone();
+        // server_manager.responder("/generate_204", HttpMethod::Get, Box::new(|| {
+        //     let ok = config_manager_clone.is_online();
 
-            let ok = config_manager_clone.is_online();
+        //     if ok {
+        //         Ok(Responder {
+        //             status: 200,
+        //             message: None,
+        //             headers: &[],
+        //             f: Box::new(|resp| {
+        //                 resp.write(b"<HTML><BODY>Success</BODY></HTML>")?;
+        //                 Ok(())
+        //             }),
+        //         })
+        //     } else {
+        //         Ok(Responder {
+        //             status: 302,
+        //             message: None,
+        //             headers: &[("Location", "/config")],
+        //             f: Box::new(|resp| {
+        //                 resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
+        //                 Ok(())
+        //             }),
+        //         })
+        //     }
+        // }))?;
 
-            // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
+        // // server_manager.handle("/generate_204", HttpMethod::Get, Box::new(move |resp| {
 
-            info!("Received {:?} request for {} configured={}", req.method(), req.uri(), ok);
+        // //     let ok = config_manager_clone.is_online();
+
+        // //     // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
+
+        // //     info!("Received {:?} request for {} configured={}", req.method(), req.uri(), ok);
             
             
-            if ok { 
-                let mut resp = req.into_ok_response()?;        
-                resp.write(b"<HTML><BODY>Success</BODY></HTML>")?;
-            } else {
-                let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
-                resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
-            }
-            Ok(())
-        })?;
+        // //     if ok { 
+        // //         let mut resp = req.into_ok_response()?;        
+        // //         resp.write(b"<HTML><BODY>Success</BODY></HTML>")?;
+        // //     } else {
+        // //         let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
+        // //         resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
+        // //     }
+        // //     Ok(())
+        // // }))?;
 
-        let config_manager_clone = config_manager.clone();
-        server_manager.on("/hotspot-detect.html", Method::Get, move |req| {
+    //     let config_manager_clone = config_manager.clone();
+    //     server_manager.responder(
+    //         "/hotspot-detect.html", 
+    //         HttpMethod::Get, 
+    //         Box::new(|| {
+    //             let ok = config_manager_clone.is_online();
 
-            let ok = config_manager_clone.is_online();
+    //         if ok {
+    //             Ok(Responder {
+    //                 status: 200,
+    //                 message: None,
+    //                 headers: &[],
+    //                 f: Box::new(|resp| {
+    //                     resp.write(b"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2//EN\">
+    // <HTML>
+    // <HEAD>
+    //     <TITLE>Success</TITLE>
+    // </HEAD>
+    // <BODY>
+    //     Success
+    // </BODY>
+    // </HTML>")?;
+    //                     Ok(())
+    //                 }),
+    //             })
+    //         } else {
+    //             Ok(Responder {
+    //                 status: 302,
+    //                 message: None,
+    //                 headers: &[("Location", "/config")],
+    //                 f: Box::new(|resp| {
+    //                     resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
+    //                     Ok(())
+    //                 }),
+    //             })
+    //         }
+    //         })
+    //     )?;
 
-            // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
 
-            info!("Received {:?} request for {} configured={} V2", req.method(), req.uri(), ok);
+//         server_manager.old_on("/hotspot-detect.html", Method::Get, move |req| {
+
+//             let ok = config_manager_clone.is_online();
+
+//             // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
+
+//             info!("Received {:?} request for {} configured={} V2", req.method(), req.uri(), ok);
             
-            if ok {  
-                let mut resp = req.into_ok_response()?;       
-                resp.write(b"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2//EN\">
-<HTML>
-<HEAD>
-	<TITLE>Success</TITLE>
-</HEAD>
-<BODY>
-	Success
-</BODY>
-</HTML>")?;
-            } else {let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
-                resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
-            }
-            Ok(())
-        })?;
+//             if ok {  
+//                 let mut resp = req.into_ok_response()?;       
+//                 resp.write(b"<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 3.2//EN\">
+// <HTML>
+// <HEAD>
+// 	<TITLE>Success</TITLE>
+// </HEAD>
+// <BODY>
+// 	Success
+// </BODY>
+// </HTML>")?;
+//             } else {let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
+//                 resp.write(b"<HTML><BODY>Not configured</BODY></HTML>")?;
+//             }
+//             Ok(())
+//         })?;
 
-        let config_manager_clone = config_manager.clone();
-        server_manager.on("/connecttest.txt", Method::Get, move |req| {
+        // let config_manager_clone = config_manager.clone();
+        // server_manager.responder(
+        //     "/connecttest.txt", 
+        //     HttpMethod::Get, 
+        //     Box::new(|| {
+        //         let ok = config_manager_clone.is_online();
 
-            let ok = config_manager_clone.is_online();
+        //     if ok {
+        //         Ok(Responder {
+        //             status: 200,
+        //             message: None,
+        //             headers: &[],
+        //             f: Box::new(|resp| {
+        //                 resp.write(b"Microsoft Connect Test")?;
+        //                 Ok(())
+        //             }),
+        //         })
+        //     } else {
+        //         Ok(Responder {
+        //             status: 302,
+        //             message: None,
+        //             headers: &[("Location", "/config")],
+        //             f: Box::new(|resp| {
+        //                 resp.write(b"Not configured")?;
+        //                 Ok(())
+        //             }),
+        //         })
+        //     }
+        //     })
+        // )?;
 
-            // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
+        // server_manager.old_on("/connecttest.txt", Method::Get, move |req| {
 
-            info!("Received {:?} request for {} configured={}", req.method(), req.uri(), ok);
+        //     let ok = config_manager_clone.is_online();
+
+        //     // info!("Received request for /hotspot-detect.html from {}", req.connection().remote_addr());
+
+        //     info!("Received {:?} request for {} configured={}", req.method(), req.uri(), ok);
             
-            if ok {  
-                let mut resp = req.into_ok_response()?;       
-                resp.write(b"Microsoft Connect Test")?;
-            } else {
-                let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
-                resp.write(b"Not configured")?;
-            }
-            Ok(())
-        })?;
+        //     if ok {  
+        //         let mut resp = req.into_ok_response()?;       
+        //         resp.write(b"Microsoft Connect Test")?;
+        //     } else {
+        //         let mut resp = req.into_response(302, None, &[("Location", "/config")])?;
+        //         resp.write(b"Not configured")?;
+        //     }
+        //     Ok(())
+        // })?;
 
         Ok(())
     }

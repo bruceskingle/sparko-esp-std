@@ -8,12 +8,13 @@ use indexmap::IndexMap;
 use log::{error, info};
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
+use sparko_embedded_std::http_server::{HttpMethod, HttpServerManager};
 use std::str::FromStr;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
 
 use crate::config_store::{EspConfigStore, EspConfigStoreFactory};
-use crate::http::HttpServerManager;
+use crate::http::EspHttpServerManager;
 #[cfg(feature = "board-xiao-esp32c6")]
 use crate::led::MonoLedManager;
 #[cfg(feature = "simple-led")]
@@ -251,11 +252,13 @@ impl SparkoEsp32StdBuilder {
         // }
 
 
-        let mut server_manager = HttpServerManager::new()?;
+        let mut server_manager = EspHttpServerManager::new()?;
 
         server_manager.init_common_pages()?;
+        server_manager.init_captive_portal(&self.ap_mode)?;
         
         let config_manager = Arc::new(bare_config_manager);
+        // let sm: &mut dyn HttpServerManager = &mut server_manager;
         ConfigManager::create_pages(&config_manager, &mut server_manager)?;
 
         // This should be in the app
@@ -349,7 +352,7 @@ pub struct SparkoEsp32Std {
 #[cfg(feature = "simple-led")]
     pub led_manager: SimpleLedManager<'static>,
     pub config_manager: Arc<ConfigManager>,
-    pub server_manager: HttpServerManager<'static>,
+    pub server_manager: EspHttpServerManager<'static>,
     features: Vec<FeatureHolder>,
     pub ap_mode: Arc<Mutex<bool>>,
     // task_manager: TaskManager,
