@@ -4,11 +4,23 @@ use std::sync::Arc;
 use croner::Cron;
 use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
 use log::info;
-use sparko_embedded_std::{config::{ConfigSpecValue, ConfigStore, ConfigStoreFactory, TypedValue}, problem::ProblemManager, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::{config::{ConfigSpecValue, ConfigStore, ConfigStoreFactory, EnabledState, TypedValue}, problem::ProblemManager, tz::{TIMEZONE_LEN, TimeZone}};
 
+use crate::core::CORE_FEATURE_NAME;
+
+const FEATURE_NAMESPACE_NAME: &str = "feature";
+const RESERVED_FEATURE_NAMES: [&str; 6] = [
+    CORE_FEATURE_NAME,
+    FEATURE_NAMESPACE_NAME,
+    "wifi",
+    "phy",
+    "bt_config",
+    "nvs.net80211",
+];
 
 pub struct EspConfigStoreFactory {
     nvs_partition: EspNvsPartition<NvsDefault>, 
+    // feature_namespace: EspNvs<NvsDefault>,
     problem_manager: Arc<ProblemManager>,
 }
 
@@ -16,31 +28,60 @@ impl EspConfigStoreFactory {
     pub fn new(
         nvs_partition: EspNvsPartition<NvsDefault>, 
         problem_manager: Arc<ProblemManager>
-    ) -> Self
+    ) -> anyhow::Result<Self>
     {
-        EspConfigStoreFactory{
-            nvs_partition, 
+        // let feature_namespace = EspNvs::new(nvs_partition.clone(), FEATURE_NAMESPACE_NAME, true)?;
+
+        Ok(EspConfigStoreFactory{
+            nvs_partition,
+            // feature_namespace,
             problem_manager,
-        }
+        })
     }
 }
 
 impl ConfigStoreFactory for EspConfigStoreFactory {
-    fn create(&self, name: &str) -> anyhow::Result<impl ConfigStore> {
-        let nvs_namespace = EspNvs::new(self.nvs_partition.clone(), &name, true)?;
+    fn create(&self, feature_name: String, internal: bool) -> anyhow::Result<Box<dyn ConfigStore>>{
 
-        Ok(EspConfigStore {
+        if !internal {
+            for reserved_name in RESERVED_FEATURE_NAMES.iter() {
+                if &feature_name == *reserved_name {
+                    return Err(anyhow::anyhow!("Feature name '{}' is reserved and cannot be used", &feature_name));
+                }
+            }
+        }
+        let feature_namespace = EspNvs::new(self.nvs_partition.clone(), FEATURE_NAMESPACE_NAME, true)?;
+        let nvs_namespace = EspNvs::new(self.nvs_partition.clone(), &feature_name, true)?;
+
+        {
+            info!("Iterating over feature {} NVS items for debugging:", &feature_name);
+            let mut keys = nvs_namespace.keys(None).unwrap();
+
+            loop {
+                match keys.next_key() {
+                    Some((key, data_type)) => log::info!("NVS item: {} of type {:?}", key, data_type),
+                    None => break,
+                }
+            }
+        }
+
+        Ok(Box::new(EspConfigStore {
+            feature_name,
+            feature_namespace,
             nvs_namespace,
             problem_manager: self.problem_manager.clone(),
-        })
+        }))
     }
 }
 
 
 pub struct EspConfigStore {
+    feature_name: String,
+    feature_namespace: EspNvs<NvsDefault>,
     pub nvs_namespace: EspNvs<NvsDefault>,
     pub problem_manager: Arc<ProblemManager>,
 }
+
 
 impl EspConfigStore {
 
@@ -207,5 +248,17 @@ impl ConfigStore for EspConfigStore {
             config_value.problem_id = self.problem_manager.set(config_value.problem_id, format!("Required value {} removed", name));
         }
         Ok(())
+    }
+    
+    fn load_enabled_state(&self) -> anyhow::Result<EnabledState> {
+        let enabled = if let Some(value) = self.feature_namespace.get_u8(&self.feature_name)? {
+                info!("Read feature enabled value for {} from NVS: {}", &self.feature_name, value);
+                value != 0
+            } else {
+                info!("Read feature enabled value for {} from NVS: None", &self.feature_name);
+                false
+            };
+
+            Ok(EnabledState::from(enabled))
     }
 }

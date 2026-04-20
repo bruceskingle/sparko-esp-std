@@ -132,7 +132,8 @@ impl SparkoEsp32StdBuilder {
 
         list_nvs_keys();
 
-        let config_manager_builder =  ConfigManager::builder(nvs_partition.clone(), problem_manager.clone(), ap_mode.clone())?;
+        let config_store_factory = EspConfigStoreFactory::new(nvs_partition.clone(), problem_manager.clone())?;
+        let config_manager_builder =  ConfigManager::builder(Box::new(config_store_factory), problem_manager.clone(), ap_mode.clone())?;
 
         let mut builder = Self {
             nvs_partition,

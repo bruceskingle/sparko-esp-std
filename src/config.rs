@@ -5,7 +5,7 @@ use esp_idf_svc::http::{Method, server::{EspHttpConnection}};
 
 use indexmap::IndexMap;
 use log::info;
-use sparko_embedded_std::{config::{Config, ConfigSpec, EnabledState, TypedValue}, http_server::{HttpMethod, HttpServerManager}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::{config::{Config, ConfigSpec, ConfigStoreFactory, EnabledState, TypedValue}, http_server::{HttpMethod, HttpServerManager}, problem::{ProblemId, ProblemManager}, tz::{TIMEZONE_LEN, TimeZone}};
 use sparko_embedded_std::config::ConfigStore;
 use url::form_urlencoded;
 use crate::{config_store::EspConfigStore, core::{CORE_FEATURE_NAME, TIMEZONE}, http::{EspHttpServerManager, WriteWrapper}};
@@ -37,7 +37,7 @@ pub struct FeatureConfig {
     pub inner: Mutex<InnerFeatureConfig>,
     // nvs_namespace: EspNvs<NvsDefault>,
     // problem_manager: Arc<ProblemManager>,
-    config_store: EspConfigStore,
+    config_store: Box<dyn ConfigStore>,
 }
 
 impl FeatureConfig {
@@ -135,55 +135,58 @@ impl FeatureConfig {
         }
     }
 
-    pub fn from_feature(feature_descriptor: FeatureDescriptor, nvs_partition: EspNvsPartition<NvsDefault>, feature_namespace: &EspNvs<NvsDefault>, internal: bool, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
+    pub fn from_feature(feature_descriptor: FeatureDescriptor, config_store_factory: &Box<dyn ConfigStoreFactory>, internal: bool, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
+        let config_store = config_store_factory.create(feature_descriptor.name.clone(), internal)?;
+
         let enabled = if internal {
             EnabledState::Required
         }
         else {
-        
-            for reserved_name in RESERVED_FEATURE_NAMES.iter() {
-                if feature_descriptor.name == *reserved_name {
-                    return Err(anyhow::anyhow!("Feature name '{}' is reserved and cannot be used", feature_descriptor.name));
-                }
-            }
+            config_store.load_enabled_state()?
+            // for reserved_name in RESERVED_FEATURE_NAMES.iter() {
+            //     if feature_descriptor.name == *reserved_name {
+            //         return Err(anyhow::anyhow!("Feature name '{}' is reserved and cannot be used", feature_descriptor.name));
+            //     }
+            // }
 
-            let enabled = if let Some(value) = feature_namespace.get_u8(&feature_descriptor.name)? {
-                info!("Read feature enabled value for {} from NVS: {}", feature_descriptor.name, value);
-                value != 0
-            } else {
-                info!("Read feature enabled value for {} from NVS: None", feature_descriptor.name);
-                false
-            };
+            // let enabled = if let Some(value) = feature_namespace.get_u8(&feature_descriptor.name)? {
+            //     info!("Read feature enabled value for {} from NVS: {}", feature_descriptor.name, value);
+            //     value != 0
+            // } else {
+            //     info!("Read feature enabled value for {} from NVS: None", feature_descriptor.name);
+            //     false
+            // };
 
-            EnabledState::from(enabled)
+            // EnabledState::from(enabled)
         };
 
         // info!("feature.enabled for {}: {}", feature_descriptor.name, enabled);
-        Self::new(feature_descriptor.name, enabled, feature_descriptor.config, nvs_partition, problem_manager)
-    }
+    //     Self::new(feature_descriptor.name, enabled, feature_descriptor.config, nvs_partition, problem_manager)
+    // }
 
-    pub fn new(name: String, enabled: EnabledState, mut config: ConfigSpec, nvs_partition: EspNvsPartition<NvsDefault>, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
+    // pub fn new(name: String, enabled: EnabledState, mut config: ConfigSpec, nvs_partition: EspNvsPartition<NvsDefault>, problem_manager: &Arc<ProblemManager>) -> anyhow::Result<Self> {
 
-        let nvs_namespace = EspNvs::new(nvs_partition, &name, true)?;
+        // let nvs_namespace = EspNvs::new(nvs_partition, &name, true)?;
 
-        {
-            info!("Iterating over feature {} NVS items for debugging:", &name);
-            let mut keys = nvs_namespace.keys(None).unwrap();
+        // {
+        //     info!("Iterating over feature {} NVS items for debugging:", &name);
+        //     let mut keys = nvs_namespace.keys(None).unwrap();
 
-            loop {
-                match keys.next_key() {
-                    Some((key, data_type)) => log::info!("NVS item: {} of type {:?}", key, data_type),
-                    None => break,
-                }
-            }
-        }
+        //     loop {
+        //         match keys.next_key() {
+        //             Some((key, data_type)) => log::info!("NVS item: {} of type {:?}", key, data_type),
+        //             None => break,
+        //         }
+        //     }
+        // }
 
-        let config_store = EspConfigStore{
-            nvs_namespace,
-            problem_manager: problem_manager.clone(),
-        };
+        // let config_store = EspConfigStore{
+        //     nvs_namespace,
+        //     problem_manager: problem_manager.clone(),
+        // };
 
-        info!("Loading feature {} config from NVS", &name);
+        let mut config = feature_descriptor.config;
+        info!("Loading feature {} config from NVS", &feature_descriptor.name);
         for (name, config_value) in config.map.iter_mut() {
             //config_value.value = 
             config_store.load(name, config_value);
@@ -192,7 +195,7 @@ impl FeatureConfig {
 
 
         let feature_config = Self {
-            name,
+            name: feature_descriptor.name,
             inner: Mutex::new(InnerFeatureConfig { enabled, config }),
             // nvs_namespace,
             // problem_manager: problem_manager.clone(),
@@ -380,7 +383,7 @@ impl FeatureConfig {
         Ok(())
     }
 
-    pub fn handle_config_form(&self, form: &IndexMap<String, String>, feature_namespace: &EspNvs<NvsDefault>) -> anyhow::Result<()> {
+    pub fn handle_config_form(&self, form: &IndexMap<String, String>) -> anyhow::Result<()> {
         info!("Handling config form for feature: {}", self.name);
         let mut inner = self.inner.lock().unwrap();
         if let EnabledState::Required = inner.enabled {
@@ -391,8 +394,10 @@ impl FeatureConfig {
             let str_val = form.get(&name).map(|s| s.as_str()).unwrap_or("").trim();
             let enabled = str_val == "on";
             info!("Feature {} enabled value from form: {} -> enabled={}", &self.name, str_val, enabled);
-            inner.enabled = EnabledState::from(enabled);
-                feature_namespace.set_u8(&self.name, if enabled { 1 } else { 0 })?;
+            inner.enabled = self.config_store.load_enabled_state()?;
+            
+            // EnabledState::from(enabled);
+            //     feature_namespace.set_u8(&self.name, if enabled { 1 } else { 0 })?;
         }
 
         for (name, config_value) in inner.config.map.iter_mut() {
@@ -441,9 +446,9 @@ impl FeatureConfig {
 
 
 pub struct ConfigManagerBuilder {
-    nvs_partition: EspNvsPartition<NvsDefault>,
+    config_store_factory: Box<dyn ConfigStoreFactory>,
     features: IndexMap<String, FeatureConfig>,
-    feature_namespace: EspNvs<NvsDefault>,
+    // feature_namespace: EspNvs<NvsDefault>,
     // failure_reason: Arc<Mutex<Option<String>>>,
     problem_manager: Arc<ProblemManager>,
     ap_mode: Arc<Mutex<bool>>,
@@ -451,18 +456,19 @@ pub struct ConfigManagerBuilder {
 
 impl ConfigManagerBuilder {
     fn new(
-        nvs_partition: EspNvsPartition<NvsDefault>, 
+        config_store_factory: Box<dyn ConfigStoreFactory>,
+        // nvs_partition: EspNvsPartition<NvsDefault>, 
         // failure_reason: Arc<Mutex<Option<String>>>, 
         problem_manager: Arc<ProblemManager>,
         ap_mode: Arc<Mutex<bool>>) -> anyhow::Result<Self>
     {
         let features: IndexMap<String, FeatureConfig> = IndexMap::new();
-        let feature_namespace = EspNvs::new(nvs_partition.clone(), FEATURE_NAMESPACE_NAME, true)?;
+        // let feature_namespace = EspNvs::new(nvs_partition.clone(), FEATURE_NAMESPACE_NAME, true)?;
 
         Ok(Self {
-            nvs_partition,
+            config_store_factory,
             features,
-            feature_namespace,
+            // feature_namespace,
             // failure_reason,
             problem_manager,
             ap_mode,
@@ -471,7 +477,7 @@ impl ConfigManagerBuilder {
 
     pub fn add_feature(&mut self, descriptor: FeatureDescriptor, internal: bool) -> anyhow::Result<Config> {
         log::info!("About to create config for feature: {}", &descriptor.name);
-        let feature_config = FeatureConfig::from_feature(descriptor, self.nvs_partition.clone(), &self.feature_namespace, internal, &self.problem_manager)?;
+        let feature_config = FeatureConfig::from_feature(descriptor, &self.config_store_factory, internal, &self.problem_manager)?;
         let feature_name = feature_config.name.clone();
         let config = feature_config.to_config();
         log::info!("Added feature: {}", &feature_name);
@@ -489,9 +495,9 @@ impl ConfigManagerBuilder {
 
     pub fn build(self) -> ConfigManager {
         ConfigManager {
-            nvs_partition: self.nvs_partition,
+            // nvs_partition: self.nvs_partition,
             features: self.features,
-            feature_namespace: self.feature_namespace,
+            // feature_namespace: self.feature_namespace,
             // failure_reason: self.failure_reason,
             problem_manager: self.problem_manager,
             ap_mode: self.ap_mode,
@@ -500,9 +506,9 @@ impl ConfigManagerBuilder {
 }
 
 pub struct ConfigManager {
-    nvs_partition: EspNvsPartition<NvsDefault>,
+    // nvs_partition: EspNvsPartition<NvsDefault>,
     pub features: IndexMap<String, FeatureConfig>,
-    feature_namespace: EspNvs<NvsDefault>,
+    // feature_namespace: EspNvs<NvsDefault>,
     // pub failure_reason: Arc<Mutex<Option<String>>>,
     problem_manager: Arc<ProblemManager>,
     ap_mode: Arc<Mutex<bool>>,
@@ -510,12 +516,13 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     pub fn builder(
-        nvs_partition: EspNvsPartition<NvsDefault>, 
+        config_store_factory: Box<dyn ConfigStoreFactory>,
+        // nvs_partition: EspNvsPartition<NvsDefault>, 
         // failure_reason: Arc<Mutex<Option<String>>>, 
         problem_manager: Arc<ProblemManager>,
         ap_mode: Arc<Mutex<bool>>)  -> anyhow::Result<ConfigManagerBuilder>
     {
-        ConfigManagerBuilder::new(nvs_partition, problem_manager, ap_mode)
+        ConfigManagerBuilder::new(config_store_factory, problem_manager, ap_mode)
     }
 
 
@@ -721,7 +728,7 @@ impl ConfigManager {
     pub fn handle_config_form(&self, form: &IndexMap<String, String>) -> anyhow::Result<()> {
         info!("Handling config form submission: {:?}", form);
         for (_feature_name, feature_config) in &self.features {
-            feature_config.handle_config_form(form, &self.feature_namespace)?;
+            feature_config.handle_config_form(form)?;
         }
         Ok(())
     }
@@ -729,7 +736,7 @@ impl ConfigManager {
 
 
 
-
+// TODO: remove these they are in config_store now
 const FEATURE_NAMESPACE_NAME: &str = "feature";
 const RESERVED_FEATURE_NAMES: [&str; 6] = [
     CORE_FEATURE_NAME,
