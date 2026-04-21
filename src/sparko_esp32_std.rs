@@ -1,27 +1,20 @@
-use std::io::Write;
-
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
-use std::{backtrace::Backtrace, net::{IpAddr, UdpSocket}, sync::{Arc, Mutex}, thread};
+use std::{net::UdpSocket, sync::{Arc, Mutex}, thread};
 
-use croner::Cron;
-use esp_idf_hal::{gpio::PinDriver, ledc::LedcDriver};
-use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method, client::EspHttpConnection, server::EspHttpServer}, nvs::{EspDefaultNvsPartition, EspNvs}, timer::EspTaskTimerService};
-use indexmap::IndexMap;
+use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method}, nvs::EspDefaultNvsPartition};
 use log::{error, info};
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::config_manager::{ConfigManager, ConfigManagerBuilder};
 use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
-use sparko_embedded_std::http_server::{HttpMethod, HttpServerManager};
-use std::str::FromStr;
+use sparko_embedded_std::http_server::HttpServerManager;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
 
 use crate::Feature;
 use crate::commands::EspCommands;
-use crate::config_store::{EspConfigStore, EspConfigStoreFactory};
-use crate::core::CORE_FEATURE_NAME;
+use crate::config_store::EspConfigStoreFactory;
 use crate::http::EspHttpServerManager;
 #[cfg(feature = "board-xiao-esp32c6")]
 use crate::led::MonoLedManager;
@@ -29,7 +22,7 @@ use crate::led::MonoLedManager;
 use crate::led::SimpleLedManager;
 
 
-use crate::{core::{Core, MDNS_HOSTNAME}, led::{LedManager, RgbLedManager}, wifi::WiFiManager};
+use crate::{core::Core, led::{LedManager, RgbLedManager}, wifi::WiFiManager};
 
 use esp_idf_sys::*;
 use std::ffi::CStr;
@@ -191,7 +184,7 @@ impl SparkoEsp32StdBuilder {
 
         let descriptor = feature.init(&mut self.initializer)?;
         let name = descriptor.name.clone();
-        let (config, valid) = self.config_manager_builder.add_feature(descriptor, internal)?;
+        let (config, _valid) = self.config_manager_builder.add_feature(descriptor, internal)?;
         self.features.push(FeatureHolder {
             feature,
             config,
@@ -200,26 +193,6 @@ impl SparkoEsp32StdBuilder {
 
         Ok(())
     }
-
-    // pub fn with_handler<F>(
-    //     mut self,
-    //     uri: &str,
-    //     method: Method,
-    //     f: F,
-    // ) -> Self
-    // where
-    //     F: for<'r> Fn(esp_idf_svc::http::server::Request<&mut EspHttpConnection>) -> Self,
-    // {
-    //     let endpoint = Endpoint {
-    //         uri: uri.to_string(),
-    //         method,
-    //     };
-
-    //     let hndler = Box::new(f);
-    //     self.handlers.insert(endpoint, Box::new(f));
-    //     self
-
-    // }
 
     pub fn build(mut self) -> anyhow::Result<SparkoEsp32StdRunner> {
         self.features.shrink_to_fit();
@@ -233,19 +206,14 @@ impl SparkoEsp32StdBuilder {
             peripherals.ledc.channel1, peripherals.pins.gpio16,
             peripherals.ledc.channel2, peripherals.pins.gpio17)?;
         
-#[cfg(feature = "rgb-led")]
-        led_manager.set_led_initializing()?;
-
-
 
 #[cfg(feature = "board-xiao-esp32c6")]
         let led_manager = MonoLedManager::new(true,  peripherals.pins.gpio15)?;
-        // let led_manager = SimpleLedManager::new(true, peripherals.pins.gpio15);
 
         led_manager.set_led_initializing()?;
 
         let sys_loop = EspSystemEventLoop::take()?;
-        let timer_service = EspTaskTimerService::new()?;
+        // let timer_service = EspTaskTimerService::new()?;
 
 
 
@@ -256,36 +224,9 @@ impl SparkoEsp32StdBuilder {
                 &self.problem_manager,
                 self.wifi_sender,
             )?;
-
-        // let led_red_pin = PinDriver::output(peripherals.pins.gpio4)?;
-        // let led_green_pin = PinDriver::output(peripherals.pins.gpio16)?;
-        // let led_blue_pin = PinDriver::output(peripherals.pins.gpio17)?;
-
-
-        // let led_timer: esp_idf_hal::ledc::TIMER0<'_> = peripherals.ledc.timer0;
-        // let led_timer_driver = esp_idf_hal::ledc::LedcTimerDriver::new(led_timer, &esp_idf_hal::ledc::config::TimerConfig::new().frequency(1000.Hz()))?;
-    
-        // let led_channel_red = Arc::new(Mutex::new(LedcDriver::new(peripherals.ledc.channel0, &led_timer_driver, peripherals.pins.gpio4)?));
-        // let led_channel_green = Arc::new(Mutex::new(LedcDriver::new(peripherals.ledc.channel1, &led_timer_driver, peripherals.pins.gpio16)?));
-        // let led_channel_blue = Arc::new(Mutex::new(LedcDriver::new(peripherals.ledc.channel2, &led_timer_driver, peripherals.pins.gpio17)?));
-        // let led = Arc::new(Mutex::new(led_pin));
-
         
-        let mut bare_config_manager = //ConfigManager::new(nvs_partition, failure_reason, ap_mode.clone())?;
+        let bare_config_manager = //ConfigManager::new(nvs_partition, failure_reason, ap_mode.clone())?;
             self.config_manager_builder.build();
-
-        // let mut features = Vec::new();
-
-        
-
-        // for feature in feature_list.into_iter() {
-        //     let config = bare_config_manager.add_feature(&feature, false)?;
-        //     features.push(FeatureHolder {
-        //         feature: feature,
-        //         config,
-        //     });
-        // }
-
 
         let mut server_manager = EspHttpServerManager::new()?;
 
@@ -293,7 +234,6 @@ impl SparkoEsp32StdBuilder {
         server_manager.init_captive_portal(&self.ap_mode)?;
         
         let config_manager = Arc::new(bare_config_manager);
-        // let sm: &mut dyn HttpServerManager = &mut server_manager;
         ConfigManager::create_pages(&config_manager, &mut server_manager)?;
 
         // This should be in the app
@@ -306,7 +246,7 @@ impl SparkoEsp32StdBuilder {
             info!("Received {:?} request for {}", req.method(), req.uri());
 
             if cloned_ap_mode.lock().unwrap().clone() {
-                let mut resp = req.into_response(
+                req.into_response(
                     302,
                     Some("Found"),
                     &[("Location", "/config")],
@@ -352,12 +292,7 @@ impl SparkoEsp32StdBuilder {
                 server_manager,
                 features: self.features,
                 ap_mode: self.ap_mode,
-
-                // core_feature: self.core_feature,
-                // core_feature_name: self.core_feature_name,
                 core_config_valid: self.core_config_valid,
-                // core_feature_config: self.core_feature_config,
-                // sntp: None,
             },
             initializer: self.initializer,
             core_feature_holder: FeatureHolder {
@@ -401,13 +336,7 @@ pub struct SparkoEsp32Std {
     pub server_manager: EspHttpServerManager<'static>,
     features: Vec<FeatureHolder>,
     pub ap_mode: Arc<Mutex<bool>>,
-    // task_manager: TaskManager,
-    // sntp: Option<EspSntp<'static>>,
-
-    // core_feature: Core,
-    // core_feature_name: String,
     core_config_valid: bool,
-    // core_feature_config: Config,
 }
 
 impl SparkoEmbeddedStd for SparkoEsp32Std {
@@ -474,33 +403,9 @@ impl SparkoEsp32Std {
 
         self.led_manager.set_led_running()?;
 
+        // This should never return
         task_manager.run(self)
-        
-        
-        // ; this is the core task now
-        // loop {
-        //         log::info!("Top of loop");
-
-        //         let datetime = Utc::now();
-        //         info!("Time synced: {}", datetime.format("%Y-%m-%d %H:%M:%S"));
-
-        
-        //         let heap_free = unsafe { esp_get_free_heap_size() };
-        //         let heap_min = unsafe { esp_get_minimum_free_heap_size() };
-        //         log::info!("heap free={} min={}", heap_free, heap_min);
-                
-        //         // TODO: force a reset if we run low on heap
-
-        //         std::thread::sleep(std::time::Duration::from_secs(10));
-        //     }
-
-        // Ok(())
     }
-    
-
-    // pub fn run(&mut self) -> anyhow::Result<()> {
-
-    // }
     
 
     fn start(&mut self, initializer: SparkoEsp32StdInitializer, core_feature_holder: FeatureHolder) -> anyhow::Result<()> {
@@ -516,49 +421,13 @@ impl SparkoEsp32Std {
                 log::info!("Client mode started successfully");
                 return Ok(());
             }
-
-
-
-            // return Ok(());
-
-            // server_manager.fn_handler("/", esp_idf_svc::http::Method::Get, move |req|  -> anyhow::Result<()> {
-            //         let mut response = req.into_ok_response()?;
-            //         // unwrapping the mutex lock calls because if there is a poisoned mutex we want to panic anyway
-            //         response.write(format!("Hello").as_bytes())?;
-            //         response.flush()?;
-            //         led.lock().unwrap().toggle()?;
-            //         Ok(())
-            //     })?;
-                
-
-            
-
-            // server_manager.fn_handler("/", esp_idf_svc::http::Method::Get, move |req|  -> anyhow::Result<()> {
-            //     let mut response = req.into_ok_response()?;
-            //     // unwrapping the mutex lock calls because if there is a poisoned mutex we want to panic anyway
-            //     response.write(format!("External IP Address is: {}", handler_addr.lock().unwrap()).as_bytes())?;
-            //     led.lock().unwrap().toggle()?;
-            //     Ok(())
-            // })?;
-
-            
         }
         else {
             self.led_manager.set_led_admin()?;
             info!("Invalid config, starting AP mode");
         }
 
-        // if let Some(reason) = self.config_manager.failure_reason.lock().unwrap().as_ref() {
-        //         info!("APMODE Failure reason present, showing error message on config page: {}", reason);
-        //     }
-        //     else {
-        //         info!("APMODE No failure reason, not showing error message on config page");
-        //     }
-
         *self.ap_mode.lock().unwrap() = true;
-        
-
-        // self.server_manager.init_ap_pages()?;
 
         let server_addr = self.wifi_manager.start_access_point()?;
 
@@ -566,38 +435,19 @@ impl SparkoEsp32Std {
         
         loop {
             log::info!("Top of AP loop");
-
-            
-
-            // let mut led = led.lock()?;
-            // led.toggle()?;
             std::thread::sleep(std::time::Duration::from_secs(10));
         }
-
-        fn system_halt<S: AsRef<str>>(s: S) {
-            // TODO: Implement BSOD or similar system halt mechanism here
-            println!("{}", s.as_ref());
-
-            let bt = Backtrace::force_capture();
-            println!("Stack trace:\n{bt}");
-
-            std::process::exit(1);
-        }
+        // Self::system_halt("AP Loop terminated");
     }
 
-    // pub fn main_loop(&mut self) -> anyhow::Result<()> {
-    //     loop {
-    //         let now = std::time::SystemTime::now();
-    //         let datetime: DateTime<Local> = now.into();
-    //         info!("Top of main loop time is : {}", datetime.format("%Y-%m-%d %H:%M:%S"));
+    // fn system_halt<S: AsRef<str>>(s: S) {
+    //     // TODO: Implement BSOD or similar system halt mechanism here
+    //     println!("{}", s.as_ref());
 
-    //         let wake = (now + Duration::hours(1))
-    //             .with_minute(0).unwrap()
-    //             .with_second(0).unwrap()
-    //             .with_nanosecond(0).unwrap();
-            
-    //         std::thread::sleep(std::time::Duration::from_secs(10));
-    //     }
+    //     let bt = Backtrace::force_capture();
+    //     println!("Stack trace:\n{bt}");
+
+    //     std::process::exit(1);
     // }
 
     fn captive_dns_server(server_addr: std::net::Ipv4Addr)  {

@@ -1,7 +1,6 @@
 
 use std::net::Ipv4Addr;
-use std::sync::mpsc::{Sender, Receiver};
-use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 
 use chrono::Local;
 use log::info;
@@ -20,7 +19,6 @@ pub const TIMEZONE: &str = "time_zone";
 pub const SSID_LEN: usize = 32;
 pub const PASSWORD_LEN: usize = 64;
 pub const HOSTNAME_LEN: usize = 32;
-pub const FQDN_LEN: usize = 64;
 
 pub struct Core {
     // The core feature provides wifi and mDNS
@@ -64,7 +62,7 @@ impl Core {
 }
 
 impl Feature for Core {
-    fn init(&self, init: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
+    fn init(&self, _init: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
         let config = ConfigSpec::builder()
             .with(SSID.to_string(), ConfigSpecValue::new(TypedValue::String(SSID_LEN, None), true))?
             .with(WIFI_PASSWORD.to_string(), ConfigSpecValue::new(TypedValue::String(PASSWORD_LEN, None), true))?
@@ -79,7 +77,7 @@ impl Feature for Core {
         })
     }
     
-    fn start(&mut self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
+    fn start(&mut self, _sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
 
         let opt_config = config.map.get(TIMEZONE);
         if let Some(config) = opt_config {

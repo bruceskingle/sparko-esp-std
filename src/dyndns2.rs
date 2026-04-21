@@ -72,7 +72,7 @@ impl DynDns2 {
 }
 
 impl Feature for DynDns2 {
-    fn init(&self, initializer: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
+    fn init(&self, _initializer: &mut crate::sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> {
         info!("DynDns2::init()");
         let config = ConfigSpec::builder()
             .with(USER_NAME.to_string(), ConfigSpecValue::new(TypedValue::String(32, None), true))?
@@ -84,24 +84,15 @@ impl Feature for DynDns2 {
             .with(UPDATE_URL.to_string(), ConfigSpecValue::new(TypedValue::String(64, None), true))?
             .with(UPDATE_REQUIRES_ADDRESS.to_string(), ConfigSpecValue::new(TypedValue::Bool(false), false ))?
             .with(SCHEDULE.to_string(), ConfigSpecValue::new(TypedValue::Cron(None), true))?
-            // .with(UPDATE_INTERVAL.to_string(), ConfigSpecValue::new(TypedValue::Int64(Some(3600)), true))?
-            // .with("an_infeasibly_long_name_which_wont_work".to_string(), ConfigSpecValue::new(TypedValue::String(32, None), true))?
-            // .with("test".to_string(), ConfigSpecValue::new(TypedValue::String(42, None), true))?
             .build();
         
-
-
-    
-    
-        
-
         Ok(FeatureDescriptor {
             name: "DynDNS2".to_string(),
             config,
         })
     }
     
-    fn start(&mut self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
+    fn start(&mut self, _sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
         let resolve_task = ResolveTask::new(config)?;
         let schedule = config.get_valid(SCHEDULE)?;
         initializer.add_task(Box::new(resolve_task), &schedule)?;
@@ -161,7 +152,7 @@ impl ResolveTask {
             // http_client,
         };
 
-        task.execute();
+        task.execute()?;
 
         Ok(task)
     }

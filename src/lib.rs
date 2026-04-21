@@ -5,12 +5,9 @@ use sparko_embedded_std::{config::Config, feature::FeatureDescriptor};
 pub mod sparko_esp32_std;
 
 mod config_store;
-mod config;
 mod wifi;
 mod http;
 mod commands;
-// mod http_server;
-// mod esp_http_server;
 mod portal;
 mod led;
 mod mdns;
