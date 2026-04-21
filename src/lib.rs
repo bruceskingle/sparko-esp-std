@@ -1,6 +1,4 @@
-use sparko_embedded_std::config::Config;
-
-use crate::config::{FeatureDescriptor};
+use sparko_embedded_std::{config::Config, feature::FeatureDescriptor};
 
 
 
@@ -10,6 +8,7 @@ mod config_store;
 mod config;
 mod wifi;
 mod http;
+mod commands;
 // mod http_server;
 // mod esp_http_server;
 mod portal;
@@ -22,7 +21,7 @@ pub mod dyndns2;
 
 pub trait Feature {
     fn init(&self, init: &mut sparko_esp32_std::SparkoEsp32StdInitializer) -> anyhow::Result<FeatureDescriptor> ;
-    fn start(&self, sparko: &mut sparko_esp32_std::SparkoEsp32Std, initializer: &mut sparko_esp32_std::SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()>;
+    fn start(&mut self, sparko: &mut sparko_esp32_std::SparkoEsp32Std, initializer: &mut sparko_esp32_std::SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()>;
 }
 
 pub trait FeatureConfig {

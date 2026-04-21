@@ -20,7 +20,6 @@ const RESERVED_FEATURE_NAMES: [&str; 6] = [
 
 pub struct EspConfigStoreFactory {
     nvs_partition: EspNvsPartition<NvsDefault>, 
-    // feature_namespace: EspNvs<NvsDefault>,
     problem_manager: Arc<ProblemManager>,
 }
 

@@ -1,8 +1,14 @@
+
+use std::net::Ipv4Addr;
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
+
 use chrono::Local;
 use log::info;
-use sparko_embedded_std::{SparkoEmbeddedStd, config::{Config, ConfigSpec, ConfigSpecValue, TypedValue}, task::Task, tz::TimeZone};
+use sparko_embedded_std::{SparkoEmbeddedStd, config::{Config, ConfigSpec, ConfigSpecValue, TypedValue}, feature::FeatureDescriptor, task::Task, tz::TimeZone};
 
-use crate::{Feature, config::{FeatureDescriptor}, sparko_esp32_std::{SparkoEsp32Std, SparkoEsp32StdInitializer}};
+use crate::mdns::MdnsResponder;
+use crate::{Feature, sparko_esp32_std::{SparkoEsp32Std, SparkoEsp32StdInitializer}};
 
 
 pub const CORE_FEATURE_NAME: &str = "core";
@@ -18,12 +24,43 @@ pub const FQDN_LEN: usize = 64;
 
 pub struct Core {
     // The core feature provides wifi and mDNS
+    mdns_responder: MdnsResponder,
 }
 
 impl Core {
-    pub fn new() -> anyhow::Result<Self> {
-        Ok(Self {}) 
+    pub fn new(wifi_receiver: Receiver<Ipv4Addr>) -> anyhow::Result<Self> {
+
+        
+        Ok(Self {
+            mdns_responder: MdnsResponder::new(wifi_receiver),
+        }) 
     }
+
+    fn set_as_system_timezone(time_zone: &TimeZone) {
+        let tz = std::ffi::CString::new(time_zone.to_posix_tz()).unwrap();
+        unsafe {
+            esp_idf_sys::setenv(b"TZ\0".as_ptr() as *const u8, tz.as_ptr(), 1);
+            esp_idf_sys::tzset();
+        }
+        log::info!("System timezone set to {} ({})", time_zone.to_str(), time_zone.to_posix_tz());
+    }
+
+    // fn set_system_timezone(&self) -> anyhow::Result<()> {
+    //     let inner = self.features.get(CORE_FEATURE_NAME).unwrap().inner.lock().unwrap();
+    //     let opt_config = &inner.config.map.get(TIMEZONE);
+    //     if let Some(config) = opt_config {
+    //         if let TypedValue::TimeZone(tz) = config.value {
+    //             Self::set_as_system_timezone(&tz);
+    //         }
+    //         else {
+    //             anyhow::bail!("Timezone config value has wrong type");
+    //         }
+    //     }
+    //     else {
+    //         Self::set_as_system_timezone(&TimeZone::Utc);
+    //     }
+    //     Ok(())
+    // }
 }
 
 impl Feature for Core {
@@ -42,7 +79,28 @@ impl Feature for Core {
         })
     }
     
-    fn start(&self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
+    fn start(&mut self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
+
+        let opt_config = config.map.get(TIMEZONE);
+        if let Some(config) = opt_config {
+            if let TypedValue::TimeZone(tz) = config {
+                Self::set_as_system_timezone(&tz);
+            }
+            else {
+                anyhow::bail!("Timezone config value has wrong type");
+            }
+        }
+        else {
+            Self::set_as_system_timezone(&TimeZone::Utc);
+        };
+
+        let local_time = Local::now();
+        info!("Local time is: {}", local_time.format("%Y-%m-%d %H:%M:%S"));
+
+        let hostname = config.get_valid(MDNS_HOSTNAME)?;
+
+        self.mdns_responder.start(&hostname)?;
+
         let resolve_task = ResolveTask::new(config)?;
         initializer.add_task(Box::new(resolve_task), "0 * * * * *")?;
         Ok(())

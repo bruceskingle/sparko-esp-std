@@ -101,7 +101,7 @@ impl Feature for DynDns2 {
         })
     }
     
-    fn start(&self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
+    fn start(&mut self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
         let resolve_task = ResolveTask::new(config)?;
         let schedule = config.get_valid(SCHEDULE)?;
         initializer.add_task(Box::new(resolve_task), &schedule)?;

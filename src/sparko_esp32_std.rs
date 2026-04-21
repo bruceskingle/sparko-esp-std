@@ -1,4 +1,8 @@
 use std::io::Write;
+
+use std::net::Ipv4Addr;
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
 use std::{backtrace::Backtrace, net::{IpAddr, UdpSocket}, sync::{Arc, Mutex}, thread};
 
 use croner::Cron;
@@ -7,13 +11,17 @@ use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, 
 use indexmap::IndexMap;
 use log::{error, info};
 use sparko_embedded_std::config::Config;
+use sparko_embedded_std::config_manager::{ConfigManager, ConfigManagerBuilder};
 use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
 use sparko_embedded_std::http_server::{HttpMethod, HttpServerManager};
 use std::str::FromStr;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
 
+use crate::Feature;
+use crate::commands::EspCommands;
 use crate::config_store::{EspConfigStore, EspConfigStoreFactory};
+use crate::core::CORE_FEATURE_NAME;
 use crate::http::EspHttpServerManager;
 #[cfg(feature = "board-xiao-esp32c6")]
 use crate::led::MonoLedManager;
@@ -21,9 +29,7 @@ use crate::led::MonoLedManager;
 use crate::led::SimpleLedManager;
 
 
-use crate::{config::ConfigManagerBuilder, led::LedManager};
-use crate::{Feature, config::{ConfigManager}, core::{Core, MDNS_HOSTNAME}, led::RgbLedManager, wifi::WiFiManager};
-
+use crate::{core::{Core, MDNS_HOSTNAME}, led::{LedManager, RgbLedManager}, wifi::WiFiManager};
 
 use esp_idf_sys::*;
 use std::ffi::CStr;
@@ -114,6 +120,12 @@ pub struct SparkoEsp32StdBuilder {
     config_manager_builder: ConfigManagerBuilder,
     features: Vec::<FeatureHolder>,
     initializer: SparkoEsp32StdInitializer,
+
+    core_feature: Core,
+    core_feature_name: String,
+    core_config_valid: bool,
+    core_feature_config: Config,
+    wifi_sender: Sender<Ipv4Addr>,
 }
 
 impl SparkoEsp32StdBuilder {
@@ -133,19 +145,36 @@ impl SparkoEsp32StdBuilder {
         list_nvs_keys();
 
         let config_store_factory = EspConfigStoreFactory::new(nvs_partition.clone(), problem_manager.clone())?;
-        let config_manager_builder =  ConfigManager::builder(Box::new(config_store_factory), problem_manager.clone(), ap_mode.clone())?;
+        let mut config_manager_builder =  ConfigManager::builder(
+            Box::new(config_store_factory), 
+            problem_manager.clone(), 
+            ap_mode.clone(),
+            Box::new(EspCommands {}),
+        )?;
 
-        let mut builder = Self {
+        let mut initializer = SparkoEsp32StdInitializer::new();
+        let (wifi_sender, wifi_receiver): (Sender<std::net::Ipv4Addr>, Receiver<std::net::Ipv4Addr>) = mpsc::channel();
+        let core_feature = Core::new(wifi_receiver)?;
+        let descriptor = core_feature.init(&mut initializer)?;
+        let core_feature_name= descriptor.name.clone();
+        let (core_feature_config, core_config_valid) = config_manager_builder.add_feature(descriptor, true)?;
+
+        let builder = Self {
             nvs_partition,
             // failure_reason,
             problem_manager,
             features: Vec::new(),
-            initializer: SparkoEsp32StdInitializer::new(),
+            initializer,
             config_manager_builder,
             ap_mode,
+            core_feature,
+            core_feature_name,
+            core_config_valid,
+            core_feature_config,
+            wifi_sender,
         };
 
-        builder.internal_add_feature(Box::new(Core::new()?), true)?;
+        // builder.internal_add_feature(Box::new(Core::new()?), true)?;
 
 
         Ok(builder)
@@ -162,7 +191,7 @@ impl SparkoEsp32StdBuilder {
 
         let descriptor = feature.init(&mut self.initializer)?;
         let name = descriptor.name.clone();
-        let config = self.config_manager_builder.add_feature(descriptor, internal)?;
+        let (config, valid) = self.config_manager_builder.add_feature(descriptor, internal)?;
         self.features.push(FeatureHolder {
             feature,
             config,
@@ -221,7 +250,12 @@ impl SparkoEsp32StdBuilder {
 
 
         let wifi_manager = //wifi::wifi(peripherals.modem, sys_loop,Some(nvs_partition.clone()),timer_service)?;
-            WiFiManager::new(peripherals.modem, sys_loop, self.nvs_partition.clone(), &self.problem_manager)?;
+            WiFiManager::new(peripherals.modem,
+                sys_loop,
+                self.nvs_partition.clone(),
+                &self.problem_manager,
+                self.wifi_sender,
+            )?;
 
         // let led_red_pin = PinDriver::output(peripherals.pins.gpio4)?;
         // let led_green_pin = PinDriver::output(peripherals.pins.gpio16)?;
@@ -318,9 +352,19 @@ impl SparkoEsp32StdBuilder {
                 server_manager,
                 features: self.features,
                 ap_mode: self.ap_mode,
+
+                // core_feature: self.core_feature,
+                // core_feature_name: self.core_feature_name,
+                core_config_valid: self.core_config_valid,
+                // core_feature_config: self.core_feature_config,
                 // sntp: None,
             },
             initializer: self.initializer,
+            core_feature_holder: FeatureHolder {
+                feature: Box::new(self.core_feature),
+                config: self.core_feature_config,
+                name: self.core_feature_name,
+            }
     })
     }
 }
@@ -335,11 +379,12 @@ struct FeatureHolder {
 pub struct SparkoEsp32StdRunner {
     sparko_std: SparkoEsp32Std,
     initializer: SparkoEsp32StdInitializer,
+    core_feature_holder: FeatureHolder,
 }
 
 impl SparkoEsp32StdRunner {
     pub fn start(mut self) -> anyhow::Result<()> {
-        self.sparko_std.start(self.initializer)
+        self.sparko_std.start(self.initializer, self.core_feature_holder)
     }
 }
 
@@ -358,6 +403,11 @@ pub struct SparkoEsp32Std {
     pub ap_mode: Arc<Mutex<bool>>,
     // task_manager: TaskManager,
     // sntp: Option<EspSntp<'static>>,
+
+    // core_feature: Core,
+    // core_feature_name: String,
+    core_config_valid: bool,
+    // core_feature_config: Config,
 }
 
 impl SparkoEmbeddedStd for SparkoEsp32Std {
@@ -369,14 +419,28 @@ impl SparkoEsp32Std {
         SparkoEsp32StdBuilder::new()
     }
 
-    
+    fn start_feature(&mut self, mut feature_holder: FeatureHolder, mut initializer: &mut SparkoEsp32StdInitializer) {
+        if feature_holder.config.enabled.is_enabled() {
+            match feature_holder.feature.start( self, &mut initializer, &feature_holder.config) {
+                Ok(_) => info!("Started Feature {}", feature_holder.name),
+                Err(error) => error!("FAILED to start Feature {}: {}", feature_holder.name, error),
+            }
+        }
+        else {
+            info!("Feature {} is disabled", feature_holder.name)
+        }
 
-    fn start_client(&mut self, mut initializer: SparkoEsp32StdInitializer) -> anyhow::Result<()> {
+        self.features.push(feature_holder);
+    }
+
+    fn start_client(&mut self, mut initializer: SparkoEsp32StdInitializer, core_feature_holder: FeatureHolder) -> anyhow::Result<()> {
 
         // start wifi
 
-        let ip_address = self.wifi_manager.start_client(&self.config_manager)?;
-        info!("Wifi started");
+        let ip_address = self.wifi_manager.start_client(
+                &core_feature_holder.config,
+            )?;
+        info!("Wifi started: ip_address={}", &ip_address);
 
         let sntp = EspSntp::new_default()?;
         
@@ -396,32 +460,16 @@ impl SparkoEsp32Std {
         let datetime = Utc::now();
         info!("Time synced: {}", datetime.format("%Y-%m-%d %H:%M:%S"));
 
-        self.config_manager.set_system_timezone()?;
 
-        let local_time = Local::now();
-        info!("Local time is: {}", local_time.format("%Y-%m-%d %H:%M:%S"));
-
-        let hostname = self.config_manager.get_valid_core_config(MDNS_HOSTNAME)?;
-
-        crate::mdns::start_mdns(&hostname, &ip_address)?;
-
-        // Take features out to avoid borrowing issues
         let features = std::mem::take(&mut self.features);
-        
-        for feature_holder in &features {
-            if feature_holder.config.enabled.is_enabled() {
-                match feature_holder.feature.start( self, &mut initializer, &feature_holder.config) {
-                    Ok(_) => info!("Started Feature {}", feature_holder.name),
-                    Err(error) => error!("FAILED to start Feature {}: {}", feature_holder.name, error),
-                }
-            }
-            else {
-                info!("Feature {} is disabled", feature_holder.name)
-            }
+        self.features = Vec::with_capacity(features.len() + 1);
+
+        self.start_feature(core_feature_holder, &mut initializer);
+
+        for feature_holder in features {
+            self.start_feature(feature_holder, &mut initializer);
         }
 
-        // Put features back
-        self.features = features;
         let mut task_manager = initializer.task_manager_builder.build();
 
         self.led_manager.set_led_running()?;
@@ -455,12 +503,12 @@ impl SparkoEsp32Std {
     // }
     
 
-    fn start(&mut self, initializer: SparkoEsp32StdInitializer) -> anyhow::Result<()> {
+    fn start(&mut self, initializer: SparkoEsp32StdInitializer, core_feature_holder: FeatureHolder) -> anyhow::Result<()> {
         log::info!("sparko_cyd: top of run");
-        if self.config_manager.is_core_config_valid() {
+        if self.core_config_valid {
             log::info!("Loaded config");
 
-            if let Err(error) = self.start_client(initializer) {
+            if let Err(error) = self.start_client(initializer, core_feature_holder) {
                 log::error!("Error starting client: {}", error);
                 self.led_manager.set_led_error()?;
             }
