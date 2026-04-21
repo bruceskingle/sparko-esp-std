@@ -16,13 +16,14 @@ use crate::Feature;
 use crate::commands::EspCommands;
 use crate::config_store::EspConfigStoreFactory;
 use crate::http::EspHttpServerManager;
-#[cfg(feature = "board-xiao-esp32c6")]
+#[cfg(feature = "mono-led")]
 use crate::led::MonoLedManager;
 #[cfg(feature = "simple-led")]
 use crate::led::SimpleLedManager;
+#[cfg(feature = "rgb-led")]
+use crate::led::RgbLedManager;
 
-
-use crate::{core::Core, led::{LedManager, RgbLedManager}, wifi::WiFiManager};
+use crate::{core::Core, led::LedManager, wifi::WiFiManager};
 
 use esp_idf_sys::*;
 use std::ffi::CStr;
@@ -209,6 +210,8 @@ impl SparkoEsp32StdBuilder {
 
 #[cfg(feature = "board-xiao-esp32c6")]
         let led_manager = MonoLedManager::new(true,  peripherals.pins.gpio15)?;
+#[cfg(feature = "board-devkitv1")]
+        let led_manager = MonoLedManager::new(false,  peripherals.pins.gpio2)?;
 
         led_manager.set_led_initializing()?;
 

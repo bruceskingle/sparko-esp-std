@@ -41,6 +41,7 @@ mono-led = []
 rgb-led = []
 board-cyd = ["rgb-led"]
 board-xiao-esp32c6 = ["mono-led"]
+board-devkitv1 = ["mono-led"]
 
 [build-dependencies]
 #embuild = { version = "0.33", optional = true }

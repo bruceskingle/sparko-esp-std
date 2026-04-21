@@ -161,7 +161,7 @@ impl ConfigStore for EspConfigStore {
                     TypedValue::TimeZone(TimeZone::Utc)
                 }
             },
-            TypedValue::Cron(cron) => {
+            TypedValue::Cron(_) => {
                 let len = 64;
                 let mut buf = vec![0u8; (len as usize)+1];
 

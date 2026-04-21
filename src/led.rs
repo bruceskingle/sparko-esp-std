@@ -314,8 +314,8 @@ impl LedManager for MonoLedManager {
     }
     
     fn set_led_running(&self) -> anyhow::Result<()> {
-        self.set_flashes(1);
-        // self.set_on();
+        // self.set_flashes(1);
+        self.set_off();
         Ok(())
     }
     

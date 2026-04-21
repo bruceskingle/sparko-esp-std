@@ -42,23 +42,6 @@ impl Core {
         }
         log::info!("System timezone set to {} ({})", time_zone.to_str(), time_zone.to_posix_tz());
     }
-
-    // fn set_system_timezone(&self) -> anyhow::Result<()> {
-    //     let inner = self.features.get(CORE_FEATURE_NAME).unwrap().inner.lock().unwrap();
-    //     let opt_config = &inner.config.map.get(TIMEZONE);
-    //     if let Some(config) = opt_config {
-    //         if let TypedValue::TimeZone(tz) = config.value {
-    //             Self::set_as_system_timezone(&tz);
-    //         }
-    //         else {
-    //             anyhow::bail!("Timezone config value has wrong type");
-    //         }
-    //     }
-    //     else {
-    //         Self::set_as_system_timezone(&TimeZone::Utc);
-    //     }
-    //     Ok(())
-    // }
 }
 
 impl Feature for Core {
@@ -97,7 +80,7 @@ impl Feature for Core {
 
         let hostname = config.get_valid(MDNS_HOSTNAME)?;
 
-        self.mdns_responder.start(&hostname)?;
+        self.mdns_responder.start(hostname)?;
 
         let resolve_task = ResolveTask::new(config)?;
         initializer.add_task(Box::new(resolve_task), "0 * * * * *")?;
