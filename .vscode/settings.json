@@ -1,6 +1,11 @@
 {
     "rust-analyzer.cargo.features": ["board-cyd"],
     "cSpell.words": [
-        "eventloop"
+        "connecttest",
+        "eventloop",
+        "Mdns",
+        "sntp",
+        "tzset",
+        "xiao"
     ]
 }

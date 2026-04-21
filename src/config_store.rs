@@ -2,28 +2,89 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use croner::Cron;
-use esp_idf_svc::nvs::{EspNvs, NvsDefault};
+use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
 use log::info;
-use sparko_embedded_std::{config::{ConfigValue, TypedValue}, problem::ProblemManager, tz::{TIMEZONE_LEN, TimeZone}};
+use sparko_embedded_std::{config::{ConfigSpecValue, ConfigStore, ConfigStoreFactory, EnabledState, TypedValue}, problem::ProblemManager, tz::{TIMEZONE_LEN, TimeZone}};
 
+use crate::core::CORE_FEATURE_NAME;
 
+const FEATURE_NAMESPACE_NAME: &str = "feature";
+const RESERVED_FEATURE_NAMES: [&str; 6] = [
+    CORE_FEATURE_NAME,
+    FEATURE_NAMESPACE_NAME,
+    "wifi",
+    "phy",
+    "bt_config",
+    "nvs.net80211",
+];
 
-
-pub trait ConfigStore {
-    fn erase_all(&self) -> anyhow::Result<()>;
-    fn load(&self, name: &str, config_value: &mut ConfigValue);
-    fn save(&self, name: &str, config_value: &mut ConfigValue, str_value: &str) -> anyhow::Result<()>;
-    fn remove(&self, name: &str, config_value: &mut ConfigValue) -> anyhow::Result<()>;
+pub struct EspConfigStoreFactory {
+    nvs_partition: EspNvsPartition<NvsDefault>, 
+    problem_manager: Arc<ProblemManager>,
 }
 
+impl EspConfigStoreFactory {
+    pub fn new(
+        nvs_partition: EspNvsPartition<NvsDefault>, 
+        problem_manager: Arc<ProblemManager>
+    ) -> anyhow::Result<Self>
+    {
+        // let feature_namespace = EspNvs::new(nvs_partition.clone(), FEATURE_NAMESPACE_NAME, true)?;
+
+        Ok(EspConfigStoreFactory{
+            nvs_partition,
+            // feature_namespace,
+            problem_manager,
+        })
+    }
+}
+
+impl ConfigStoreFactory for EspConfigStoreFactory {
+    fn create(&self, feature_name: String, internal: bool) -> anyhow::Result<Box<dyn ConfigStore>>{
+
+        if !internal {
+            for reserved_name in RESERVED_FEATURE_NAMES.iter() {
+                if &feature_name == *reserved_name {
+                    return Err(anyhow::anyhow!("Feature name '{}' is reserved and cannot be used", &feature_name));
+                }
+            }
+        }
+        let feature_namespace = EspNvs::new(self.nvs_partition.clone(), FEATURE_NAMESPACE_NAME, true)?;
+        let nvs_namespace = EspNvs::new(self.nvs_partition.clone(), &feature_name, true)?;
+
+        {
+            info!("Iterating over feature {} NVS items for debugging:", &feature_name);
+            let mut keys = nvs_namespace.keys(None).unwrap();
+
+            loop {
+                match keys.next_key() {
+                    Some((key, data_type)) => log::info!("NVS item: {} of type {:?}", key, data_type),
+                    None => break,
+                }
+            }
+        }
+
+        Ok(Box::new(EspConfigStore {
+            feature_name,
+            feature_namespace,
+            nvs_namespace,
+            problem_manager: self.problem_manager.clone(),
+        }))
+    }
+}
+
+
 pub struct EspConfigStore {
+    feature_name: String,
+    feature_namespace: EspNvs<NvsDefault>,
     pub nvs_namespace: EspNvs<NvsDefault>,
     pub problem_manager: Arc<ProblemManager>,
 }
 
+
 impl EspConfigStore {
 
-    fn unwrap_and_log_esp<T>(&self, name: &str, config_value: &mut ConfigValue, result: Result<Option<T>, esp_idf_sys::EspError>) -> Option<T> {
+    fn unwrap_and_log_esp<T>(&self, name: &str, config_value: &mut ConfigSpecValue, result: Result<Option<T>, esp_idf_sys::EspError>) -> Option<T> {
                 match result {
                     Ok(opt_str) => {
                         if opt_str.is_none() && config_value.required {
@@ -44,7 +105,7 @@ impl EspConfigStore {
                 }
     }
 
-    fn unwrap_and_log_cron<T>(&self, name: &str, config_value: &mut ConfigValue, result: Result<T, croner::errors::CronError>) -> Option<T> {
+    fn unwrap_and_log_cron<T>(&self, name: &str, config_value: &mut ConfigSpecValue, result: Result<T, croner::errors::CronError>) -> Option<T> {
                 match result {
                     Ok(opt_str) => {
 
@@ -66,7 +127,7 @@ impl ConfigStore for EspConfigStore {
         self.nvs_namespace.erase_all()?;
         Ok(())
     }
-    fn load(&self, name: &str, config_value: &mut ConfigValue) {
+    fn load(&self, name: &str, config_value: &mut ConfigSpecValue) {
         info!("Reading config value {} from NVS", name);
         let result = match &config_value.value {
             TypedValue::String(len_ref, _) => {
@@ -116,7 +177,7 @@ impl ConfigStore for EspConfigStore {
         config_value.value = result;
     }
 
-    fn save(&self, name: &str, config_value: &mut ConfigValue, str_val: &str) -> anyhow::Result<()> {
+    fn save(&self, name: &str, config_value: &mut ConfigSpecValue, str_val: &str) -> anyhow::Result<()> {
         
                 log::info!("Config value {} is {}", name, str_val);
                 match config_value.value.from_str(str_val) {
@@ -179,12 +240,24 @@ impl ConfigStore for EspConfigStore {
                 }
     }
     
-    fn remove(&self, name: &str, config_value: &mut ConfigValue) -> anyhow::Result<()> {
+    fn remove(&self, name: &str, config_value: &mut ConfigSpecValue) -> anyhow::Result<()> {
         self.nvs_namespace.remove(name)?;
         config_value.value = config_value.value.to_none();
         if config_value.required {
             config_value.problem_id = self.problem_manager.set(config_value.problem_id, format!("Required value {} removed", name));
         }
         Ok(())
+    }
+    
+    fn load_enabled_state(&self) -> anyhow::Result<EnabledState> {
+        let enabled = if let Some(value) = self.feature_namespace.get_u8(&self.feature_name)? {
+                info!("Read feature enabled value for {} from NVS: {}", &self.feature_name, value);
+                value != 0
+            } else {
+                info!("Read feature enabled value for {} from NVS: None", &self.feature_name);
+                false
+            };
+
+            Ok(EnabledState::from(enabled))
     }
 }

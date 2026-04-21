@@ -8,18 +8,19 @@ use esp_idf_svc::wifi::EspWifi;
 use esp_idf_svc::wifi::ScanMethod;
 use esp_idf_svc::wifi::ScanSortMethod;
 use esp_idf_svc::wifi::WifiEvent;
+use sparko_embedded_std::config::Config;
 use sparko_embedded_std::problem::Problem;
 use sparko_embedded_std::problem::ProblemManager;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::mpsc::Sender;
 use log::info;
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspNvsPartition;
 use esp_idf_svc::nvs::NvsDefault;
 
-use crate::config::ConfigManager;
 use crate::core::PASSWORD_LEN;
 use crate::core::SSID_LEN;
 
@@ -28,6 +29,7 @@ pub struct WiFiManager<'a> {
     sys_loop: EspSystemEventLoop,
     wifi_sub: Arc<Mutex<Option<esp_idf_svc::eventloop::EspSubscription<'a, esp_idf_svc::eventloop::System>>>>,
     problem: Arc<Problem>,
+    wifi_sender: Sender<Ipv4Addr>,
 }
 
 impl WiFiManager<'_> {
@@ -36,6 +38,7 @@ impl WiFiManager<'_> {
         sys_loop: EspSystemEventLoop,
         nvs: EspNvsPartition<NvsDefault>,
         problem_manager: &Arc<ProblemManager>,
+        wifi_sender: Sender<Ipv4Addr>,
     ) -> anyhow::Result<Self> {
         let esp_wifi = EspWifi::new(modem, sys_loop.clone(), Some(nvs))?;
 
@@ -44,6 +47,7 @@ impl WiFiManager<'_> {
             sys_loop,
             wifi_sub: Arc::new(Mutex::new(None)),
             problem: Problem::new(problem_manager),
+            wifi_sender,
         })
     }
 
@@ -146,12 +150,12 @@ impl WiFiManager<'_> {
         Ok(ip_info.ip)
     }
 
-    pub fn start_client(&mut self, config_manager: &Arc<ConfigManager>) -> anyhow::Result<std::net::Ipv4Addr> {
+    pub fn start_client(&mut self, config: &Config) -> anyhow::Result<std::net::Ipv4Addr> {
         let wifi_configuration: embedded_svc::wifi::Configuration = embedded_svc::wifi::Configuration::Client(ClientConfiguration {
-            ssid: heapless::String::<32>::try_from(config_manager.get_valid_core_config(crate::core::SSID)?.as_str()).unwrap(),
+            ssid: config.get_required_as_heapless::<32>(crate::core::SSID)?,
             bssid: None,
             auth_method: embedded_svc::wifi::AuthMethod::WPA2Personal,
-            password: heapless::String::<64>::try_from(config_manager.get_valid_core_config(crate::core::WIFI_PASSWORD)?.as_str()).unwrap(),
+            password: config.get_required_as_heapless::<64>(crate::core::WIFI_PASSWORD)?,
             channel: None,
             scan_method: ScanMethod::CompleteScan(ScanSortMethod::Security),
             pmf_cfg: esp_idf_svc::wifi::PmfConfiguration::Capable{ required: false },
@@ -278,6 +282,7 @@ impl WiFiManager<'_> {
         
         // EspPing::default().ping(ip_info.subnet.gateway, &esp_idf_svc::ping::Configuration::default())?;
 
+        self.wifi_sender.send(ip_info.ip)?;
         Ok(ip_info.ip)
     }
 }
