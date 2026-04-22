@@ -13,6 +13,7 @@ mod led;
 mod mdns;
 mod core;
 pub mod dyndns2;
+mod display_mipidsi;
 
 
 

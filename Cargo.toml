@@ -8,7 +8,7 @@ resolver = "2"
 log = "0.4"
 esp-idf-svc = { version = "0.52.1", features = ["critical-section", "embassy-time-driver", "embassy-sync"], optional = true }
 # Remove `generic-queue-8` if you plan to use `embassy-time` WITH `embassy-executor`
-embassy-time = { version = "0.5", features = ["generic-queue-8"], optional = true }
+#embassy-time = { version = "0.5", features = ["generic-queue-8"], optional = true }
 embedded-svc = { version = "0.29.0", optional = true }
 esp-idf-hal = { version = "0.46.2", optional = true }
 esp-idf-sys = { version = "0.37.2", optional = true }
@@ -22,7 +22,12 @@ chrono = "0.4.44"
 simple-dns = "0.11.2"
 croner = "3.0.1"
 
+
+mipidsi = { version = "0.10", optional = true }
+embedded-graphics = "0.8"
+
 sparko-embedded-std = { path = "../sparko-embedded-std"}
+
 
 [features]
 default = ["espidf"]
@@ -30,7 +35,7 @@ default = ["espidf"]
 #espidf = ["esp-idf-svc", "embassy-time", "embedded-svc", "esp-idf-hal", "esp-idf-sys", "futures", "embuild"]
 espidf = [
   "esp-idf-svc",
-  "embassy-time",
+ # "embassy-time",
   "embedded-svc",
   "esp-idf-hal",
   "esp-idf-sys",
@@ -39,7 +44,9 @@ espidf = [
 simple-led = []
 mono-led = []
 rgb-led = []
-board-cyd = ["rgb-led"]
+display = []
+mipi-dsi-display = ["display", "mipidsi"]
+board-cyd = ["rgb-led", "mipi-dsi-display"]
 board-xiao-esp32c6 = ["mono-led"]
 board-devkitv1 = ["mono-led"]
 

@@ -1,5 +1,5 @@
 {
-    "rust-analyzer.cargo.features": ["board-devkitv1"],
+    "rust-analyzer.cargo.features": ["board-cyd"],
     "cSpell.words": [
         "connecttest",
         "eventloop",

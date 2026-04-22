@@ -23,6 +23,16 @@ use crate::led::SimpleLedManager;
 #[cfg(feature = "rgb-led")]
 use crate::led::RgbLedManager;
 
+use esp_idf_hal::{
+    gpio::{PinDriver, Output},
+    spi::SpiDeviceDriver,
+};
+use esp_idf_hal::{
+    delay::Ets,
+    spi::{SpiDriverConfig, SpiConfig, Dma},
+    units::Hertz,
+};
+
 use crate::{core::Core, led::LedManager, wifi::WiFiManager};
 
 use esp_idf_sys::*;
@@ -195,7 +205,7 @@ impl SparkoEsp32StdBuilder {
         Ok(())
     }
 
-    pub fn build(mut self) -> anyhow::Result<SparkoEsp32StdRunner> {
+    pub fn build<'a>(mut self) -> anyhow::Result<SparkoEsp32StdRunner<'a>> {
         self.features.shrink_to_fit();
         
         let peripherals = Peripherals::take()?;
@@ -287,6 +297,92 @@ impl SparkoEsp32StdBuilder {
 
         // END APP CODE
 
+;
+#[cfg(feature = "mipi-dsi-display")]
+        let mut display_manager;
+#[cfg(feature = "mipi-dsi-display")]
+{
+        // SPI
+        let spi = SpiDeviceDriver::new_single(
+            peripherals.spi2,
+            peripherals.pins.gpio14,
+            peripherals.pins.gpio13,
+            Some(peripherals.pins.gpio12),
+            Some(peripherals.pins.gpio15),
+            &SpiDriverConfig::new().dma(Dma::Auto(4096)),
+            &SpiConfig::new()
+                .baudrate(Hertz(20_000_000))
+                ,
+        )?;
+
+        // GPIO
+        let dc = PinDriver::output(peripherals.pins.gpio2)?;
+        // let reset = PinDriver::output(peripherals.pins.gpio4)?;
+        let mut backlight = PinDriver::output(peripherals.pins.gpio21)?;
+        // crate::display_mipidsi::start_display(
+        //     spi,
+        //     dc,
+        //     //  reset, 
+        //     backlight)?;
+
+        // // let display = x;
+
+
+        let di = crate::display_mipidsi::EspDi { spi, dc };
+
+        let mut delay = Ets;
+
+        let mut display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
+            // .reset_pin(reset)
+            .display_size(240, 320)
+            .orientation(mipidsi::options::Orientation::new().flip_horizontal())
+            .color_order(mipidsi::options::ColorOrder::Bgr)
+            .init(&mut delay) {
+                Ok(d) => d,
+                Err(e) => anyhow::bail!("Display init error {:?}", e),
+            };
+
+        // enable backlight
+        backlight.set_high()?;
+
+        display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
+            backlight,
+            display,
+        };
+
+use std::time::Duration;
+
+use embedded_graphics::{
+    pixelcolor::Rgb565,
+    prelude::*,
+    primitives::{Rectangle, PrimitiveStyle},
+};
+
+        // draw test
+        info!("DRAW YELLOW");
+        Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
+            .draw(&mut display_manager.display)?;
+
+        thread::sleep(Duration::from_secs(5));
+
+
+        info!("DRAW BLUE");
+        Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLUE))
+            .draw(&mut display_manager.display)?;
+
+        thread::sleep(Duration::from_secs(5));
+
+
+        info!("DRAW RED");
+        Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+            .draw(&mut display_manager.display)?;
+
+        thread::sleep(Duration::from_secs(5));
+}
+
         Ok(SparkoEsp32StdRunner{
             sparko_std: SparkoEsp32Std {
                 wifi_manager,
@@ -296,13 +392,15 @@ impl SparkoEsp32StdBuilder {
                 features: self.features,
                 ap_mode: self.ap_mode,
                 core_config_valid: self.core_config_valid,
+#[cfg(feature = "display")]
+                display_manager,
             },
             initializer: self.initializer,
             core_feature_holder: FeatureHolder {
                 feature: Box::new(self.core_feature),
                 config: self.core_feature_config,
                 name: self.core_feature_name,
-            }
+            },
     })
     }
 }
@@ -314,20 +412,20 @@ struct FeatureHolder {
 }
 
 
-pub struct SparkoEsp32StdRunner {
-    sparko_std: SparkoEsp32Std,
+pub struct SparkoEsp32StdRunner<'a> {
+    sparko_std: SparkoEsp32Std<'a>,
     initializer: SparkoEsp32StdInitializer,
     core_feature_holder: FeatureHolder,
 }
 
-impl SparkoEsp32StdRunner {
+impl SparkoEsp32StdRunner<'_> {
     pub fn start(mut self) -> anyhow::Result<()> {
         self.sparko_std.start(self.initializer, self.core_feature_holder)
     }
 }
 
 
-pub struct SparkoEsp32Std {
+pub struct SparkoEsp32Std<'a> {
     pub wifi_manager: WiFiManager<'static>,
 #[cfg(feature = "rgb-led")]
     pub led_manager: RgbLedManager<'static>,
@@ -340,13 +438,16 @@ pub struct SparkoEsp32Std {
     features: Vec<FeatureHolder>,
     pub ap_mode: Arc<Mutex<bool>>,
     core_config_valid: bool,
+
+#[cfg(feature = "mipi-dsi-display")]
+    display_manager: crate::display_mipidsi::MipiDsiDisplayManager<'a>,
 }
 
-impl SparkoEmbeddedStd for SparkoEsp32Std {
+impl SparkoEmbeddedStd for SparkoEsp32Std<'_> {
     
 }
 
-impl SparkoEsp32Std {
+impl SparkoEsp32Std<'_> {
     pub fn builder() -> anyhow::Result<SparkoEsp32StdBuilder> {
         SparkoEsp32StdBuilder::new()
     }
