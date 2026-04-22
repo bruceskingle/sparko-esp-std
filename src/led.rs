@@ -7,15 +7,18 @@ use log::info;
 
 use esp_idf_hal::{gpio::PinDriver, ledc::LedcDriver};
 use esp_idf_hal::units::*;
+use sparko_embedded_std::Status;
+
 
 
 pub trait LedManager {
-    fn set_on(&self);
-    fn set_off(&self);
-    fn set_led_initializing(&self) -> anyhow::Result<()>;
-    fn set_led_running(&self) -> anyhow::Result<()>;
-    fn set_led_admin(&self) -> anyhow::Result<()>;
-    fn set_led_error(&self) -> anyhow::Result<()>;
+    fn set_on(&self) -> anyhow::Result<()>;
+    fn set_off(&self) -> anyhow::Result<()>;
+    fn set_status(&self, status: &Status) -> anyhow::Result<()>;
+    // fn set_led_initializing(&self) -> anyhow::Result<()>;
+    // fn set_led_running(&self) -> anyhow::Result<()>;
+    // fn set_led_admin(&self) -> anyhow::Result<()>;
+    // fn set_led_error(&self) -> anyhow::Result<()>;
 }
 
 pub struct RgbLedManager<'a> {
@@ -79,31 +82,43 @@ impl<'a> RgbLedManager<'a> {
 }
 
 impl LedManager for RgbLedManager<'_> {
-    fn set_on(&self) {
-        self.set_color(255, 255, 255).unwrap();
+    fn set_on(&self) -> anyhow::Result<()> {
+        self.set_color(255, 255, 255)?;
+        Ok(())
     }
 
-    fn set_off(&self) {
-        self.set_color(0, 0, 0).unwrap();
+    fn set_off(&self)  -> anyhow::Result<()>{
+        self.set_color(0, 0, 0)?;
+        Ok(())
     }
 
-    fn set_led_initializing(&self) -> anyhow::Result<()> {
-        self.set_color(255, 255, 0)?;
-        Ok(())
-    }
+    // fn set_led_initializing(&self) -> anyhow::Result<()> {
+    //     self.set_color(255, 255, 0)?;
+    //     Ok(())
+    // }
     
-    fn set_led_running(&self) -> anyhow::Result<()> {
-        self.set_color(0, 255, 0)?;
-        Ok(())
-    }
+    // fn set_led_running(&self) -> anyhow::Result<()> {
+    //     self.set_color(0, 255, 0)?;
+    //     Ok(())
+    // }
     
-    fn set_led_admin(&self) -> anyhow::Result<()> {
-        self.set_color(0, 0, 255)?;
-        Ok(())
-    }
+    // fn set_led_admin(&self) -> anyhow::Result<()> {
+    //     self.set_color(0, 0, 255)?;
+    //     Ok(())
+    // }
     
-    fn set_led_error(&self) -> anyhow::Result<()> {
-        self.set_color(255, 0, 0)?;
+    // fn set_led_error(&self) -> anyhow::Result<()> {
+    //     self.set_color(255, 0, 0)?;
+    //     Ok(())
+    // }
+    
+    fn set_status(&self, status: &Status) -> anyhow::Result<()> {
+        match status {
+            Status::Initializing(_) => self.set_color(255, 255, 0)?,
+            Status::Running => self.set_color(0, 255, 0)?,
+            Status::Setup => self.set_color(0, 0, 255)?,
+            Status::Error => self.set_color(255, 0, 0)?,
+        };
         Ok(())
     }
 }
@@ -237,7 +252,7 @@ impl MonoLedManager {
         cvar: &Condvar,
         timeout: Duration,
     ) -> bool {
-        let mut state = lock.lock().unwrap();
+        let state = lock.lock().unwrap();
 
         let (state, _) = cvar
             .wait_timeout(state, timeout)
@@ -278,7 +293,7 @@ impl MonoLedManager {
 
 impl LedManager for MonoLedManager {
     
-    fn set_on(&self) {
+    fn set_on(&self) -> anyhow::Result<()> {
         info!("Set led on");
         
         let (lock , cond_var) = &*self.shared_state;
@@ -291,9 +306,10 @@ impl LedManager for MonoLedManager {
         shared_state.updated = true;
 
         cond_var.notify_all();
+        Ok(())
     }
 
-    fn set_off(&self) {
+    fn set_off(&self) -> anyhow::Result<()> {
         info!("Set led off");
         
         let (lock , cond_var) = &*self.shared_state;
@@ -304,30 +320,40 @@ impl LedManager for MonoLedManager {
         shared_state.updated = true;
 
         cond_var.notify_all();
-        
+        Ok(())
     }
 
-    fn set_led_initializing(&self) -> anyhow::Result<()> {
-        self.set_flashes(4);
-        // self.set_off();
+    fn set_status(&self, status: &Status) -> anyhow::Result<()> {
+        match status {
+            Status::Initializing(_) => self.set_flashes(1),
+            Status::Running => self.set_off()?,
+            Status::Setup => self.set_flashes(2),
+            Status::Error => self.set_flashes(3),
+        };
         Ok(())
     }
+
+    // fn set_led_initializing(&self) -> anyhow::Result<()> {
+    //     self.set_flashes(4);
+    //     // self.set_off();
+    //     Ok(())
+    // }
     
-    fn set_led_running(&self) -> anyhow::Result<()> {
-        // self.set_flashes(1);
-        self.set_off();
-        Ok(())
-    }
+    // fn set_led_running(&self) -> anyhow::Result<()> {
+    //     // self.set_flashes(1);
+    //     self.set_off();
+    //     Ok(())
+    // }
     
-    fn set_led_admin(&self) -> anyhow::Result<()> {
-        self.set_flashes(2);
-        Ok(())
-    }
+    // fn set_led_admin(&self) -> anyhow::Result<()> {
+    //     self.set_flashes(2);
+    //     Ok(())
+    // }
     
-    fn set_led_error(&self) -> anyhow::Result<()> {
-        self.set_flashes(5);
-        Ok(())
-    }
+    // fn set_led_error(&self) -> anyhow::Result<()> {
+    //     self.set_flashes(5);
+    //     Ok(())
+    // }
 }
 
 
@@ -344,42 +370,54 @@ impl<'d> SimpleLedManager<'d> {
 }
 
 impl LedManager for SimpleLedManager<'_> {
-    fn set_on(&self) {
+    fn set_on(&self) -> anyhow::Result<()> {
         info!("Set led on");
         if self.inverted {
-            self.led.lock().unwrap().set_low().unwrap();
+            self.led.lock().unwrap().set_low()?;
         } else {
-            self.led.lock().unwrap().set_high().unwrap();
+            self.led.lock().unwrap().set_high()?;
         }
+        Ok(())
     }
 
-    fn set_off(&self) {
+    fn set_off(&self) -> anyhow::Result<()> {
         info!("Set led off");
         if self.inverted {
-            self.led.lock().unwrap().set_high().unwrap();
+            self.led.lock().unwrap().set_high()?;
         } else {
-            self.led.lock().unwrap().set_low().unwrap();
+            self.led.lock().unwrap().set_low()?;
         }
+        Ok(())
     }
-    
-    fn set_led_initializing(&self) -> anyhow::Result<()> {
-        self.set_on();
+
+    fn set_status(&self, status: &Status) -> anyhow::Result<()> {
+        match status {
+            Status::Initializing(_) => self.set_on()?,
+            Status::Running => self.set_off()?,
+            Status::Setup => self.set_on()?,
+            Status::Error => self.set_on()?,
+        };
         Ok(())
     }
     
-    fn set_led_running(&self) -> anyhow::Result<()> {
-        self.set_off();
-        Ok(())
-    }
+    // fn set_led_initializing(&self) -> anyhow::Result<()> {
+    //     self.set_on();
+    //     Ok(())
+    // }
     
-    fn set_led_admin(&self) -> anyhow::Result<()> {
-        self.set_off();
-        Ok(())
-    }
+    // fn set_led_running(&self) -> anyhow::Result<()> {
+    //     self.set_off();
+    //     Ok(())
+    // }
     
-    fn set_led_error(&self) -> anyhow::Result<()> {
-        self.set_on();
-        Ok(())
-    }
+    // fn set_led_admin(&self) -> anyhow::Result<()> {
+    //     self.set_off();
+    //     Ok(())
+    // }
+    
+    // fn set_led_error(&self) -> anyhow::Result<()> {
+    //     self.set_on();
+    //     Ok(())
+    // }
 
 }
