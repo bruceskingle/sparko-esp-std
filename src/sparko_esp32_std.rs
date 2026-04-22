@@ -319,20 +319,9 @@ impl SparkoEsp32StdBuilder {
         let dc = PinDriver::output(peripherals.pins.gpio2)?;
         // let reset = PinDriver::output(peripherals.pins.gpio4)?;
         let mut backlight = PinDriver::output(peripherals.pins.gpio21)?;
-        // crate::display_mipidsi::start_display(
-        //     spi,
-        //     dc,
-        //     //  reset, 
-        //     backlight)?;
-
-        // // let display = x;
-
-
         let di = crate::display_mipidsi::EspDi { spi, dc };
-
         let mut delay = Ets;
-
-        let mut display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
+        let display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
             // .reset_pin(reset)
             .display_size(240, 320)
             .orientation(mipidsi::options::Orientation::new().flip_horizontal())
