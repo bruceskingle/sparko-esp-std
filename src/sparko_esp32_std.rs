@@ -501,9 +501,26 @@ impl<'a> SparkoEsp32Std<'a> {
         // self.sntp = Some(sntp); dont need this
         // std::thread::sleep(std::time::Duration::from_secs(2));
 
-        let datetime = Utc::now();
+        let datetime: chrono::DateTime<Local> = Local::now();
         info!("Time synced: {}", datetime.format("%Y-%m-%d %H:%M:%S"));
 
+        // // TEST
+
+        // use chrono::TimeZone;
+
+        // let mut clock = sparko_embedded_std::graphics::ClockRenderer::new(&mut self.display_manager)?;
+        // clock.draw(&mut self.display_manager)?;
+        // let mut t = datetime.timestamp_millis() / 1000;
+
+        // for i in 1..43200 {
+        //     t += 7;
+        //     let now: chrono::DateTime<Local> = Local.timestamp_opt(t, 0).unwrap();
+        //     clock.do_update(&mut self.display_manager, now)?;
+        // }
+
+
+
+        // // END TEST
 
         let features = std::mem::take(&mut self.features);
         self.features = Vec::with_capacity(features.len() + 1);
