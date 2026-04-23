@@ -3,7 +3,7 @@ use embedded_graphics::{
     pixelcolor::Rgb565,
     prelude::*,
 };
-use sparko_embedded_std::{Color, config::Config, feature::FeatureDescriptor};
+use sparko_embedded_std::{config::Config, feature::FeatureDescriptor, graphics::Color};
 
 
 
@@ -18,6 +18,7 @@ mod led;
 mod mdns;
 mod core;
 pub mod dyndns2;
+pub mod analog_clock_feature;
 mod display_mipidsi;
 
 
@@ -31,7 +32,7 @@ pub trait FeatureConfig {
 
 }
 
-pub fn to_rgb565(color: Color) -> Rgb565 {
+pub fn to_rgb565(color: &Color) -> Rgb565 {
     match color {
         Color::Black => Rgb565::BLACK,
         Color::Red => Rgb565::RED,

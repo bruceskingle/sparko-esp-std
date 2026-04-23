@@ -1,5 +1,4 @@
 use embedded_graphics::{
-    pixelcolor::Rgb565,
     prelude::*,
     primitives::{Rectangle, PrimitiveStyle},
 };
@@ -7,7 +6,7 @@ use esp_idf_hal::{
     gpio::{PinDriver, Output},
     spi::SpiDeviceDriver,
 };
-use sparko_embedded_std::{Color, DisplayManager, InitStatus, Status};
+use sparko_embedded_std::graphics::{Color, DisplayManager};
 
 use crate::to_rgb565;
 
@@ -87,12 +86,28 @@ pub struct MipiDsiDisplayManager<'a> {
 impl MipiDsiDisplayManager<'_> {
 }
 
-impl DisplayManager for MipiDsiDisplayManager<'_> {
+impl<'a> DisplayManager for MipiDsiDisplayManager<'a> {
+    
+    type Display =
+        mipidsi::Display<
+            crate::display_mipidsi::EspDi<'a>,
+            mipidsi::models::ILI9341Rgb565,
+            mipidsi::NoResetPin,
+        >;
+
+    fn display(&mut self) -> &mut Self::Display {
+        &mut self.display
+    }
+
     fn fill_color(&mut self, color: Color) -> anyhow::Result<()> {
         Rectangle::new(Point::new(0, 0), self.size)
-            .into_styled(PrimitiveStyle::with_fill(to_rgb565(color)))
+            .into_styled(PrimitiveStyle::with_fill(to_rgb565(&color)))
             .draw(&mut self.display)?;
         Ok(())
+    }
+    
+    fn map_color(&self, color: &Color) -> <Self::Display as DrawTarget>::Color {
+        to_rgb565(color)
     }
 
     

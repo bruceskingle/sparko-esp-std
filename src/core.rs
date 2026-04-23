@@ -92,8 +92,8 @@ impl Feature for Core {
 pub struct ResolveTask {
 }
 
-impl Task for ResolveTask {
-    fn run(&mut self, _sparko_cyd: &dyn SparkoEmbeddedStd) -> anyhow::Result<()> {
+impl<'a> Task<SparkoEsp32Std<'a>> for ResolveTask {
+    fn run(&mut self, _sparko_cyd: &mut SparkoEsp32Std<'a>) -> anyhow::Result<()> {
         
         log::info!("Top of loop");
 
