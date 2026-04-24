@@ -1,3 +1,5 @@
+#[cfg(not(feature = "mipi-dsi-display"))]
+use std::marker::PhantomData;
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
@@ -220,9 +222,9 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
 
         led_manager.set_status(&Status::Initializing(InitStatus::Starting))?;
 
-#[cfg(feature = "mipi-dsi-display")]
+#[cfg(feature = "display")]
         let mut display_manager;
-#[cfg(feature = "mipi-dsi-display")]
+#[cfg(feature = "board-cyd")]
 {
     use embedded_graphics::prelude::Size;
     use esp_idf_hal::{
@@ -248,7 +250,7 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
         let dc = PinDriver::output(peripherals.pins.gpio2)?;
         // let reset = PinDriver::output(peripherals.pins.gpio4)?;
         let mut backlight = PinDriver::output(peripherals.pins.gpio21)?;
-        let di = crate::display_mipidsi::EspDi { spi, dc };
+        let di = crate::display_mipidsi::EspDi { spi, dc, xoffset:  0 };
         let mut delay = Ets;
         let display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
             // .reset_pin(reset)
@@ -304,6 +306,99 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
 //         thread::sleep(Duration::from_secs(5));
 }
 
+#[cfg(feature = "board-wave-esp32c6touch147")]
+{
+    use embedded_graphics::prelude::Size;
+    use esp_idf_hal::{
+        gpio::PinDriver,
+        delay::Ets,
+        spi::{SpiDeviceDriver,SpiDriverConfig, SpiConfig, Dma},
+        units::Hertz,
+    };
+        // SPI
+        let spi = SpiDeviceDriver::new_single(
+            peripherals.spi2,
+            peripherals.pins.gpio14,
+            peripherals.pins.gpio13,
+            Some(peripherals.pins.gpio12),
+            Some(peripherals.pins.gpio15),
+            &SpiDriverConfig::new().dma(Dma::Auto(4096)),
+            &SpiConfig::new()
+                .baudrate(Hertz(20_000_000))
+                ,
+        )?;
+
+        // GPIO
+        let dc = PinDriver::output(peripherals.pins.gpio2)?;
+        // let reset = PinDriver::output(peripherals.pins.gpio4)?;
+        let mut backlight = PinDriver::output(peripherals.pins.gpio21)?;
+        let mut di = crate::display_mipidsi::EspDi { spi, dc, xoffset: 34 };
+        let mut delay = Ets;
+
+        crate::display::jd9853_init(&mut di, &mut delay)?;
+
+        let display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
+            // .reset_pin(reset)
+            .display_size(172, 320)
+            .orientation(mipidsi::options::Orientation::new().flip_horizontal())
+            .color_order(mipidsi::options::ColorOrder::Bgr)
+            .init(&mut delay) {
+                Ok(d) => d,
+                Err(e) => anyhow::bail!("Display init error {:?}", e),
+            };
+        
+
+        // enable backlight
+        backlight.set_high()?;
+
+        display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
+            backlight,
+            display,
+            size: Size::new(240, 320),
+        };
+
+// use std::time::Duration;
+
+// use embedded_graphics::{
+//     pixelcolor::Rgb565,
+//     prelude::*,
+//     primitives::{Rectangle, PrimitiveStyle},
+// };
+
+//         // draw test
+//         info!("DRAW YELLOW");
+//         let d = display_manager.display();
+        
+//         Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+//             .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
+//             .draw(d)?;
+
+//         thread::sleep(Duration::from_secs(5));
+
+
+//         info!("DRAW BLUE");
+//         Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+//             .into_styled(PrimitiveStyle::with_fill(Rgb565::BLUE))
+//             .draw(&mut display_manager.display)?;
+
+//         thread::sleep(Duration::from_secs(5));
+
+
+//         info!("DRAW RED");
+//         Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+//             .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+//             .draw(&mut display_manager.display)?;
+
+//         thread::sleep(Duration::from_secs(5));
+}
+
+
+
+
+
+
+
+#[cfg(feature = "display")]
         display_manager.set_status(&Status::Initializing(InitStatus::Starting))?;
 
         let sys_loop = EspSystemEventLoop::take()?;
@@ -378,7 +473,8 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
 
         // END APP CODE
 
-
+#[cfg(not(feature = "mipi-dsi-display"))]
+        let display_manager = PhantomData;
 
         Ok(SparkoEsp32StdRunner{
             sparko_std: SparkoEsp32Std {
@@ -389,7 +485,6 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
                 features: self.features,
                 ap_mode: self.ap_mode,
                 core_config_valid: self.core_config_valid,
-#[cfg(feature = "display")]
                 display_manager,
             },
             initializer: self.initializer,
@@ -438,6 +533,9 @@ pub struct SparkoEsp32Std<'a> {
 
 #[cfg(feature = "mipi-dsi-display")]
     pub display_manager: crate::display_mipidsi::MipiDsiDisplayManager<'a>,
+
+#[cfg(not(feature = "mipi-dsi-display"))]
+    display_manager: PhantomData<&'a ()>,
 }
 
 impl SparkoEmbeddedStd for SparkoEsp32Std<'_> {

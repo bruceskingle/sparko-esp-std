@@ -26,6 +26,9 @@ croner = "3.0.1"
 mipidsi = { version = "0.10", optional = true }
 embedded-graphics = "0.8"
 
+
+embedded-hal = "1.0"
+
 sparko-embedded-std = { path = "../sparko-embedded-std"}
 
 
@@ -45,8 +48,10 @@ simple-led = []
 mono-led = []
 rgb-led = []
 display = []
+display-jd9853 =[]
 mipi-dsi-display = ["display", "mipidsi"]
 board-cyd = ["rgb-led", "mipi-dsi-display"]
+board-wave-esp32c6touch147 = ["rgb-led", "mipi-dsi-display", "display-jd9853"]
 board-xiao-esp32c6 = ["mono-led"]
 board-devkitv1 = ["mono-led"]
 

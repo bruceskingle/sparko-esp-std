@@ -18,8 +18,16 @@ mod led;
 mod mdns;
 mod core;
 pub mod dyndns2;
+
+#[cfg(feature = "display")]
 pub mod analog_clock_feature;
+
+#[cfg(feature = "mipi-dsi-display")]
 mod display_mipidsi;
+
+
+#[cfg(feature = "display")]
+mod display;
 
 
 

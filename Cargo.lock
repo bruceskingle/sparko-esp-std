@@ -1682,6 +1682,7 @@ dependencies = [
  "chrono",
  "croner",
  "embedded-graphics",
+ "embedded-hal 1.0.0",
  "embedded-svc",
  "embuild",
  "esp-idf-hal",

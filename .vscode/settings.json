@@ -1,5 +1,6 @@
 {
-    "rust-analyzer.cargo.features": ["board-cyd"],
+    "rust-analyzer.cargo.features":
+        ["board-xiao-esp32c6"],
     "cSpell.words": [
         "connecttest",
         "eventloop",

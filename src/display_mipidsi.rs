@@ -14,6 +14,7 @@ use crate::to_rgb565;
 pub struct EspDi<'d> {
     pub spi: SpiDeviceDriver<'d, esp_idf_hal::spi::SpiDriver<'d>>,
     pub dc: PinDriver<'d, Output>,
+    pub xoffset: u32,
 }
 
 impl<'d> mipidsi::interface::Interface for EspDi<'d> {
@@ -23,15 +24,56 @@ impl<'d> mipidsi::interface::Interface for EspDi<'d> {
     const KIND: mipidsi::interface::InterfaceKind = mipidsi::interface::InterfaceKind::Serial4Line;
 
     fn send_command(&mut self, cmd: u8, args: &[u8]) -> Result<(), Self::Error> {
-        self.dc.set_low().ok();
-        self.spi.write(&[cmd])?;
+        if self.xoffset == 0 {
+            self.dc.set_low().ok();
+            self.spi.write(&[cmd])?;
 
-        if !args.is_empty() {
-            self.dc.set_high().ok();
-            self.spi.write(args)?;
+            if !args.is_empty() {
+                self.dc.set_high().ok();
+                self.spi.write(args)?;
+            }
+
+            Ok(())
         }
+        else {
+            self.dc.set_low().ok();
+            self.spi.write(&[cmd])?;
 
-        Ok(())
+            if !args.is_empty() {
+                self.dc.set_high().ok();
+
+                match cmd {
+                    0x2A => {
+                        // CASET: apply X offset (+34)
+                        let mut buf = [0u8; 4];
+                        buf.copy_from_slice(args);
+
+                        let x_start = u16::from_be_bytes([buf[0], buf[1]]) + 34;
+                        let x_end   = u16::from_be_bytes([buf[2], buf[3]]) + 34;
+
+                        let adj = [
+                            (x_start >> 8) as u8,
+                            x_start as u8,
+                            (x_end >> 8) as u8,
+                            x_end as u8,
+                        ];
+
+                        self.spi.write(&adj)?;
+                    }
+
+                    0x2B => {
+                        // RASET: no offset needed
+                        self.spi.write(args)?;
+                    }
+
+                    _ => {
+                        self.spi.write(args)?;
+                    }
+                }
+            }
+
+            Ok(())
+        }
     }
 
     fn send_pixels<const N: usize>(
