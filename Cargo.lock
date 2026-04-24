@@ -1667,11 +1667,9 @@ dependencies = [
  "anyhow",
  "chrono",
  "croner",
- "embedded-graphics",
  "heapless 0.9.2",
  "indexmap",
  "log",
- "micromath",
 ]
 
 [[package]]
