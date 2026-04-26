@@ -14,7 +14,7 @@ use crate::to_rgb565;
 pub struct EspDi<'d> {
     pub spi: SpiDeviceDriver<'d, esp_idf_hal::spi::SpiDriver<'d>>,
     pub dc: PinDriver<'d, Output>,
-    pub xoffset: u32,
+    pub xoffset: u16,
 }
 
 impl<'d> mipidsi::interface::Interface for EspDi<'d> {
@@ -48,8 +48,8 @@ impl<'d> mipidsi::interface::Interface for EspDi<'d> {
                         let mut buf = [0u8; 4];
                         buf.copy_from_slice(args);
 
-                        let x_start = u16::from_be_bytes([buf[0], buf[1]]) + 34;
-                        let x_end   = u16::from_be_bytes([buf[2], buf[3]]) + 34;
+                        let x_start = u16::from_be_bytes([buf[0], buf[1]]) + self.xoffset;
+                        let x_end   = u16::from_be_bytes([buf[2], buf[3]]) + self.xoffset;
 
                         let adj = [
                             (x_start >> 8) as u8,
@@ -121,7 +121,12 @@ impl<'d> mipidsi::interface::Interface for EspDi<'d> {
 
 pub struct MipiDsiDisplayManager<'a> {
     pub backlight: PinDriver<'a, Output>,
+#[cfg(feature = "board-cyd")]
     pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, mipidsi::NoResetPin>,
+#[cfg(feature = "board-wave-esp32c6touch147")]
+    pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, PinDriver<'a, esp_idf_hal::gpio::Output>>,
+#[cfg(feature = "board-wave-esp32c6147")]
+    pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ST7789, PinDriver<'a, esp_idf_hal::gpio::Output>>,
     pub size: Size,
 }
 
@@ -130,12 +135,12 @@ impl MipiDsiDisplayManager<'_> {
 
 impl<'a> DisplayManager for MipiDsiDisplayManager<'a> {
     
-    type Display =
-        mipidsi::Display<
-            crate::display_mipidsi::EspDi<'a>,
-            mipidsi::models::ILI9341Rgb565,
-            mipidsi::NoResetPin,
-        >;
+#[cfg(feature = "board-cyd")]
+    type Display = mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, mipidsi::NoResetPin,>;
+#[cfg(feature = "board-wave-esp32c6touch147")]
+    type Display = mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, PinDriver<'a, esp_idf_hal::gpio::Output>>;
+#[cfg(feature = "board-wave-esp32c6147")]
+    type Display = mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ST7789, PinDriver<'a, esp_idf_hal::gpio::Output>>;
 
     fn display(&mut self) -> &mut Self::Display {
         &mut self.display
