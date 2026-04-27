@@ -44,9 +44,10 @@ espidf = [
   "esp-idf-sys",
   "futures"
 ]
-simple-led = []
-mono-led = []
-rgb-led = []
+led = []
+simple-led = ["led"]
+mono-led = ["led"]
+rgb-led = ["led"]
 display = []
 display-jd9853 =[]
 mipi-dsi-display = ["display", "mipidsi"]

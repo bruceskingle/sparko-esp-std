@@ -14,7 +14,8 @@ use crate::to_rgb565;
 pub struct EspDi<'d> {
     pub spi: SpiDeviceDriver<'d, esp_idf_hal::spi::SpiDriver<'d>>,
     pub dc: PinDriver<'d, Output>,
-    pub xoffset: u16,
+    pub xoffset: i16,
+    pub yoffset: i16,
 }
 
 impl<'d> mipidsi::interface::Interface for EspDi<'d> {
@@ -24,57 +25,87 @@ impl<'d> mipidsi::interface::Interface for EspDi<'d> {
     const KIND: mipidsi::interface::InterfaceKind = mipidsi::interface::InterfaceKind::Serial4Line;
 
     fn send_command(&mut self, cmd: u8, args: &[u8]) -> Result<(), Self::Error> {
-        if self.xoffset == 0 {
-            self.dc.set_low().ok();
-            self.spi.write(&[cmd])?;
+        self.dc.set_low().ok();
+        self.spi.write(&[cmd])?;
 
-            if !args.is_empty() {
-                self.dc.set_high().ok();
-                self.spi.write(args)?;
-            }
+        if !args.is_empty() {
+            self.dc.set_high().ok();
 
-            Ok(())
-        }
-        else {
-            self.dc.set_low().ok();
-            self.spi.write(&[cmd])?;
-
-            if !args.is_empty() {
-                self.dc.set_high().ok();
-
-                match cmd {
-                    0x2A => {
-                        // CASET: apply X offset (+34)
+            match cmd {
+                0x2A => {
+                    if self.xoffset == 0 {
+                        self.spi.write(args)?;
+                    }
+                    else {
+                        // CASET: apply X offset
                         let mut buf = [0u8; 4];
                         buf.copy_from_slice(args);
 
-                        let x_start = u16::from_be_bytes([buf[0], buf[1]]) + self.xoffset;
-                        let x_end   = u16::from_be_bytes([buf[2], buf[3]]) + self.xoffset;
+                        let (start, end) = if self.xoffset >= 0 {
+                            (
+                                u16::from_be_bytes([buf[0], buf[1]]).saturating_add(self.xoffset as u16),
+                                u16::from_be_bytes([buf[2], buf[3]]).saturating_add(self.xoffset as u16)
+                            )
+                        } else {
+                            (
+                                u16::from_be_bytes([buf[0], buf[1]]).saturating_sub(-self.xoffset as u16),
+                                u16::from_be_bytes([buf[2], buf[3]]).saturating_sub(-self.xoffset as u16)
+                            )
+                        };
+                        
 
                         let adj = [
-                            (x_start >> 8) as u8,
-                            x_start as u8,
-                            (x_end >> 8) as u8,
-                            x_end as u8,
+                            (start >> 8) as u8,
+                            start as u8,
+                            (end >> 8) as u8,
+                            end as u8,
                         ];
 
                         self.spi.write(&adj)?;
                     }
+                }
 
-                    0x2B => {
-                        // RASET: no offset needed
+                0x2B => {
+                    if self.yoffset == 0 {
                         self.spi.write(args)?;
                     }
+                    else {
+                        // RASET: apply X offset
+                        let mut buf = [0u8; 4];
+                        buf.copy_from_slice(args);
 
-                    _ => {
-                        self.spi.write(args)?;
+                        let (start, end) = if self.yoffset >= 0 {
+                            (
+                                u16::from_be_bytes([buf[0], buf[1]]).saturating_add(self.yoffset as u16),
+                                u16::from_be_bytes([buf[2], buf[3]]).saturating_add(self.yoffset as u16)
+                            )
+                        } else {
+                            (
+                                u16::from_be_bytes([buf[0], buf[1]]).saturating_sub(-self.yoffset as u16),
+                                u16::from_be_bytes([buf[2], buf[3]]).saturating_sub(-self.yoffset as u16)
+                            )
+                        };
+
+                        let adj = [
+                            (start >> 8) as u8,
+                            start as u8,
+                            (end >> 8) as u8,
+                            end as u8,
+                        ];
+
+                        self.spi.write(&adj)?;
                     }
                 }
-            }
 
-            Ok(())
+                _ => {
+                    self.spi.write(args)?;
+                }
+            }
         }
+
+        Ok(())
     }
+
 
     fn send_pixels<const N: usize>(
         &mut self,
@@ -127,7 +158,6 @@ pub struct MipiDsiDisplayManager<'a> {
     pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, PinDriver<'a, esp_idf_hal::gpio::Output>>,
 #[cfg(feature = "board-wave-esp32c6147")]
     pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ST7789, PinDriver<'a, esp_idf_hal::gpio::Output>>,
-    pub size: Size,
 }
 
 impl MipiDsiDisplayManager<'_> {
@@ -147,7 +177,8 @@ impl<'a> DisplayManager for MipiDsiDisplayManager<'a> {
     }
 
     fn fill_color(&mut self, color: Color) -> anyhow::Result<()> {
-        Rectangle::new(Point::new(0, 0), self.size)
+        self.display.bounding_box()
+        // Rectangle::new(Point::new(0, 0), self.size)
             .into_styled(PrimitiveStyle::with_fill(to_rgb565(&color)))
             .draw(&mut self.display)?;
         Ok(())

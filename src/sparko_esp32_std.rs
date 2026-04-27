@@ -7,7 +7,7 @@ use std::{net::UdpSocket, sync::{Arc, Mutex}, thread};
 
 use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method}, nvs::EspDefaultNvsPartition};
 use log::{error, info};
-use sparko_embedded_std::{InitStatus, Status};
+use sparko_embedded_std::{DisplayOrientation, InitStatus, Status};
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::config_manager::{ConfigManager, ConfigManagerBuilder};
 use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
@@ -125,6 +125,8 @@ pub struct SparkoEsp32StdBuilder<'a> {
     core_config_valid: bool,
     core_feature_config: Config,
     wifi_sender: Sender<Ipv4Addr>,
+#[cfg(feature = "display")]
+    orientation: DisplayOrientation,
 }
 
 impl<'a> SparkoEsp32StdBuilder<'a> {
@@ -171,12 +173,22 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
             core_config_valid,
             core_feature_config,
             wifi_sender,
+#[cfg(feature = "display")]
+    orientation: DisplayOrientation::Rotate0,
         };
 
         // builder.internal_add_feature(Box::new(Core::new()?), true)?;
 
 
         Ok(builder)
+    }
+
+
+#[cfg(feature = "mipi-dsi-display")]
+    pub fn with_display_orientation(mut self, orientation: DisplayOrientation) -> anyhow::Result<Self> {
+        self.orientation = orientation;
+
+        Ok(self)
     }
 
     pub fn with_feature(mut self, feature: Box<dyn Feature>) -> anyhow::Result<Self> {
@@ -250,12 +262,29 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
         let dc = PinDriver::output(peripherals.pins.gpio2)?;
         // let reset = PinDriver::output(peripherals.pins.gpio4)?;
         let mut backlight = PinDriver::output(peripherals.pins.gpio21)?;
-        let di = crate::display_mipidsi::EspDi { spi, dc, xoffset:  0 };
+
+        let mut orientation = mipidsi::options::Orientation::new().flip_horizontal();
+        
+        match self.orientation {
+            DisplayOrientation::Rotate0 => {
+            },
+            DisplayOrientation::Rotate90 => {
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg90);
+            },
+            DisplayOrientation::Rotate180 => {
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg180);
+            },
+            DisplayOrientation::Rotate270 => {
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg270);
+            },
+        };
+
+        let di = crate::display_mipidsi::EspDi { spi, dc, xoffset:  0, yoffset: 0 };
         let mut delay = Ets;
         let display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
             // .reset_pin(reset)
             .display_size(240, 320)
-            .orientation(mipidsi::options::Orientation::new().flip_horizontal())
+            .orientation(orientation)
             .color_order(mipidsi::options::ColorOrder::Bgr)
             .init(&mut delay) {
                 Ok(d) => d,
@@ -268,7 +297,6 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
         display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
             backlight,
             display,
-            size: Size::new(240, 320),
         };
 
 // use std::time::Duration;
@@ -455,13 +483,44 @@ display_manager.backlight.set_low()?;
         let reset = PinDriver::output(peripherals.pins.gpio21)?;
         
 
-        let di = crate::display_mipidsi::EspDi { spi, dc, xoffset: 34 };
+        let mut orientation = mipidsi::options::Orientation::new();
+        let xoffset;
+        let yoffset;
+        
+        match self.orientation {
+            DisplayOrientation::Rotate0 => {
+                xoffset = 34;
+                yoffset = 0;
+            },
+            DisplayOrientation::Rotate90 => {
+                xoffset = 0;
+                yoffset = -34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg90);
+            },
+            DisplayOrientation::Rotate180 => {
+                xoffset = -34;
+                yoffset = 0;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg180);
+            },
+            DisplayOrientation::Rotate270 => {
+                xoffset = 0;
+                yoffset = 34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg270);
+            },
+        };
+
+
+
+        let di = crate::display_mipidsi::EspDi { spi, dc, xoffset, yoffset };
         let mut delay = Ets;
 
         let display = match mipidsi::Builder::new(mipidsi::models::ST7789, di)
             .reset_pin(reset)
             .display_size(172, 320)
-            // .orientation(mipidsi::options::Orientation::new().flip_horizontal())
+            .orientation(orientation)
             .color_order(mipidsi::options::ColorOrder::Rgb)
             .invert_colors(mipidsi::options::ColorInversion::Inverted)
             .init(&mut delay) {
@@ -476,7 +535,6 @@ display_manager.backlight.set_low()?;
         display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
             backlight,
             display,
-            size: Size::new(172, 320),
         };
 }
 
