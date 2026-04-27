@@ -11,14 +11,14 @@ use sparko_embedded_std::graphics::{Color, DisplayManager};
 use crate::to_rgb565;
 
 
-pub struct EspDi<'d> {
-    pub spi: SpiDeviceDriver<'d, esp_idf_hal::spi::SpiDriver<'d>>,
-    pub dc: PinDriver<'d, Output>,
+pub struct EspDi {
+    pub spi: SpiDeviceDriver<'static, esp_idf_hal::spi::SpiDriver<'static>>,
+    pub dc: PinDriver<'static, Output>,
     pub xoffset: i16,
     pub yoffset: i16,
 }
 
-impl<'d> mipidsi::interface::Interface for EspDi<'d> {
+impl mipidsi::interface::Interface for EspDi {
 
     type Word = u8;
     type Error = esp_idf_hal::spi::SpiError;
@@ -150,27 +150,27 @@ impl<'d> mipidsi::interface::Interface for EspDi<'d> {
 
 
 
-pub struct MipiDsiDisplayManager<'a> {
-    pub backlight: PinDriver<'a, Output>,
+pub struct MipiDsiDisplayManager {
+    pub backlight: PinDriver<'static, Output>,
 #[cfg(feature = "board-cyd")]
-    pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, mipidsi::NoResetPin>,
+    pub display: mipidsi::Display<crate::display_mipidsi::EspDi, mipidsi::models::ILI9341Rgb565, mipidsi::NoResetPin>,
 #[cfg(feature = "board-wave-esp32c6touch147")]
-    pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, PinDriver<'a, esp_idf_hal::gpio::Output>>,
+    pub display: mipidsi::Display<crate::display_mipidsi::EspDi, mipidsi::models::ILI9341Rgb565, PinDriver<'static, esp_idf_hal::gpio::Output>>,
 #[cfg(feature = "board-wave-esp32c6147")]
-    pub display: mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ST7789, PinDriver<'a, esp_idf_hal::gpio::Output>>,
+    pub display: mipidsi::Display<crate::display_mipidsi::EspDi, mipidsi::models::ST7789, PinDriver<'static, esp_idf_hal::gpio::Output>>,
 }
 
-impl MipiDsiDisplayManager<'_> {
+impl MipiDsiDisplayManager {
 }
 
-impl<'a> DisplayManager for MipiDsiDisplayManager<'a> {
+impl DisplayManager for MipiDsiDisplayManager {
     
 #[cfg(feature = "board-cyd")]
-    type Display = mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, mipidsi::NoResetPin,>;
+    type Display = mipidsi::Display<crate::display_mipidsi::EspDi, mipidsi::models::ILI9341Rgb565, mipidsi::NoResetPin,>;
 #[cfg(feature = "board-wave-esp32c6touch147")]
-    type Display = mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ILI9341Rgb565, PinDriver<'a, esp_idf_hal::gpio::Output>>;
+    type Display = mipidsi::Display<crate::display_mipidsi::EspDi, mipidsi::models::ILI9341Rgb565, PinDriver<'static, esp_idf_hal::gpio::Output>>;
 #[cfg(feature = "board-wave-esp32c6147")]
-    type Display = mipidsi::Display<crate::display_mipidsi::EspDi<'a>, mipidsi::models::ST7789, PinDriver<'a, esp_idf_hal::gpio::Output>>;
+    type Display = mipidsi::Display<crate::display_mipidsi::EspDi, mipidsi::models::ST7789, PinDriver<'static, esp_idf_hal::gpio::Output>>;
 
     fn display(&mut self) -> &mut Self::Display {
         &mut self.display

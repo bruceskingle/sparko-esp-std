@@ -7,7 +7,6 @@ use std::sync::Mutex;
 use esp_idf_svc::http::Method;
 use esp_idf_svc::http::client::EspHttpConnection;
 use log::info;
-use sparko_embedded_std::SparkoEmbeddedStd;
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::config::ConfigSpec;
 use sparko_embedded_std::config::ConfigSpecValue;
@@ -15,6 +14,7 @@ use sparko_embedded_std::config::TypedValue;
 use sparko_embedded_std::graphics::ClockRenderer;
 use sparko_embedded_std::graphics::DisplayManager;
 use sparko_embedded_std::task::Task;
+use sparko_embedded_std::platform::SparkoEmbeddedStdInitializer;
 
 use crate::sparko_esp32_std::SparkoEsp32Std;
 use crate::sparko_esp32_std::SparkoEsp32StdInitializer;
@@ -81,7 +81,7 @@ pub struct ResolveTask {
 
 
 
-impl<'a> Task<SparkoEsp32Std<'a>> for ResolveTask
+impl Task<SparkoEsp32Std> for ResolveTask
 {
     // fn run(&mut self, _sparko_cyd: &dyn SparkoEmbeddedStd) -> anyhow::Result<()> {
     //     let clock_renderer = 
@@ -91,7 +91,7 @@ impl<'a> Task<SparkoEsp32Std<'a>> for ResolveTask
         "Analog Clock"
     }
     
-    fn run(&mut self, sparko_embedded: &mut SparkoEsp32Std<'a>) -> anyhow::Result<()> {
+    fn run(&mut self, sparko_embedded: &mut SparkoEsp32Std) -> anyhow::Result<()> {
         self.clock_renderer.update(&mut sparko_embedded.display_manager)
     }
 }

@@ -1,6 +1,6 @@
 {
     "rust-analyzer.cargo.features":
-        ["board-cyd"],
+        ["board-wave-esp32c6147"],
     "cSpell.words": [
         "connecttest",
         "eventloop",

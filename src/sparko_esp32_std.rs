@@ -7,10 +7,11 @@ use std::{net::UdpSocket, sync::{Arc, Mutex}, thread};
 
 use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method}, nvs::EspDefaultNvsPartition};
 use log::{error, info};
+use sparko_embedded_std::platform::{SparkoEmbeddedStd, SparkoEmbeddedStdInitializer};
 use sparko_embedded_std::{DisplayOrientation, InitStatus, Status};
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::config_manager::{ConfigManager, ConfigManagerBuilder};
-use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
+use sparko_embedded_std::{problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
 use sparko_embedded_std::http_server::HttpServerManager;
 use sparko_embedded_std::graphics::DisplayManager;
 use esp_idf_svc::sntp::*;
@@ -88,20 +89,15 @@ fn list_nvs_keys() {
 
 // type PageHandler = Box<dyn for<'r> Fn(esp_idf_svc::http::server::Request<&mut EspHttpConnection>) -> anyhow::Result<()> + Send + 'static>;
 
-pub struct SparkoEsp32StdInitializer<'a> {
-    task_manager_builder: TaskManagerBuilder<SparkoEsp32Std<'a>>,
+pub struct SparkoEsp32StdInitializer {
+    task_manager_builder: TaskManagerBuilder<SparkoEsp32Std>,
 }
 
-impl<'a> SparkoEsp32StdInitializer<'a> {
+impl SparkoEsp32StdInitializer {
     fn new() -> Self {
         Self {
             task_manager_builder: TaskManager::builder(),
         }
-    }
-
-    pub fn add_task(&mut self, task_initializer: Box<dyn Task<SparkoEsp32Std<'a>>>, schedule_spec: &str) -> anyhow::Result<()> {
-        self.task_manager_builder.add_task(task_initializer, schedule_spec)?;
-        Ok(())
     }
 
     // pub fn build(mut self) -> anyhow::Result<SparkoEsp32Std> {
@@ -110,15 +106,24 @@ impl<'a> SparkoEsp32StdInitializer<'a> {
     // }
 }
 
+impl SparkoEmbeddedStdInitializer for SparkoEsp32StdInitializer {
+    type EmbeddedStd = SparkoEsp32Std;
 
-pub struct SparkoEsp32StdBuilder<'a> {
+    fn add_task(&mut self, task_initializer: Box<dyn Task<SparkoEsp32Std>>, schedule_spec: &str) -> anyhow::Result<()> {
+        self.task_manager_builder.add_task(task_initializer, schedule_spec)?;
+        Ok(())
+    }
+}
+
+
+pub struct SparkoEsp32StdBuilder {
     nvs_partition: esp_idf_svc::nvs::EspNvsPartition<esp_idf_svc::nvs::NvsDefault>,
     // failure_reason: Arc<Mutex<Option<String>>>,
     problem_manager: Arc<ProblemManager>,
     ap_mode: Arc<Mutex<bool>>,
     config_manager_builder: ConfigManagerBuilder,
     features: Vec::<FeatureHolder>,
-    initializer: SparkoEsp32StdInitializer<'a>,
+    initializer: SparkoEsp32StdInitializer,
 
     core_feature: Core,
     core_feature_name: String,
@@ -129,7 +134,7 @@ pub struct SparkoEsp32StdBuilder<'a> {
     orientation: DisplayOrientation,
 }
 
-impl<'a> SparkoEsp32StdBuilder<'a> {
+impl SparkoEsp32StdBuilder {
     fn new() -> anyhow::Result<Self> {
         // It is necessary to call this function once. Otherwise, some patches to the runtime
         // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
@@ -212,7 +217,7 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
         Ok(())
     }
 
-    pub fn build(mut self) -> anyhow::Result<SparkoEsp32StdRunner<'a>> {
+    pub fn build(mut self) -> anyhow::Result<SparkoEsp32StdRunner> {
         self.features.shrink_to_fit();
         
         let peripherals = Peripherals::take()?;
@@ -261,7 +266,7 @@ impl<'a> SparkoEsp32StdBuilder<'a> {
         // GPIO
         let dc = PinDriver::output(peripherals.pins.gpio2)?;
         // let reset = PinDriver::output(peripherals.pins.gpio4)?;
-        let mut backlight = PinDriver::output(peripherals.pins.gpio21)?;
+        let mut backlight: PinDriver<'static, esp_idf_hal::gpio::Output> = PinDriver::output(peripherals.pins.gpio21)?;
 
         let mut orientation = mipidsi::options::Orientation::new().flip_horizontal();
         
@@ -651,20 +656,20 @@ struct FeatureHolder {
 }
 
 
-pub struct SparkoEsp32StdRunner<'a> {
-    sparko_std: SparkoEsp32Std<'a>,
-    initializer: SparkoEsp32StdInitializer<'a>,
+pub struct SparkoEsp32StdRunner {
+    sparko_std: SparkoEsp32Std,
+    initializer: SparkoEsp32StdInitializer,
     core_feature_holder: FeatureHolder,
 }
 
-impl SparkoEsp32StdRunner<'_> {
+impl SparkoEsp32StdRunner {
     pub fn start(mut self) -> anyhow::Result<()> {
         self.sparko_std.start(self.initializer, self.core_feature_holder)
     }
 }
 
 
-pub struct SparkoEsp32Std<'a> {
+pub struct SparkoEsp32Std {
     pub wifi_manager: WiFiManager<'static>,
 #[cfg(feature = "rgb-led")]
     pub led_manager: RgbLedManager<'static>,
@@ -679,18 +684,15 @@ pub struct SparkoEsp32Std<'a> {
     core_config_valid: bool,
 
 #[cfg(feature = "mipi-dsi-display")]
-    pub display_manager: crate::display_mipidsi::MipiDsiDisplayManager<'a>,
-
-#[cfg(not(feature = "mipi-dsi-display"))]
-    display_manager: PhantomData<&'a ()>,
+    pub display_manager: crate::display_mipidsi::MipiDsiDisplayManager,
 }
 
-impl SparkoEmbeddedStd for SparkoEsp32Std<'_> {
+impl SparkoEmbeddedStd for SparkoEsp32Std {
     
 }
 
-impl<'a> SparkoEsp32Std<'a> {
-    pub fn builder() -> anyhow::Result<SparkoEsp32StdBuilder<'a>> {
+impl SparkoEsp32Std {
+    pub fn builder() -> anyhow::Result<SparkoEsp32StdBuilder> {
         SparkoEsp32StdBuilder::new()
     }
 
@@ -717,7 +719,7 @@ impl<'a> SparkoEsp32Std<'a> {
         self.features.push(feature_holder);
     }
 
-    fn start_client(&mut self, mut initializer: SparkoEsp32StdInitializer<'a>, core_feature_holder: FeatureHolder) -> anyhow::Result<()> {
+    fn start_client(&mut self, mut initializer: SparkoEsp32StdInitializer, core_feature_holder: FeatureHolder) -> anyhow::Result<()> {
 
         // start wifi
 
@@ -786,7 +788,7 @@ impl<'a> SparkoEsp32Std<'a> {
     }
     
 
-    fn start(&mut self, initializer: SparkoEsp32StdInitializer<'a>, core_feature_holder: FeatureHolder) -> anyhow::Result<()> {
+    fn start(&mut self, initializer: SparkoEsp32StdInitializer, core_feature_holder: FeatureHolder) -> anyhow::Result<()> {
         log::info!("sparko_cyd: top of run");
         if self.core_config_valid {
             log::info!("Loaded config");
