@@ -1,4 +1,9 @@
-use sparko_embedded_std::{config::Config, feature::FeatureDescriptor};
+
+use embedded_graphics::{
+    pixelcolor::Rgb565,
+    prelude::*,
+};
+use sparko_embedded_std::{config::Config, feature::FeatureDescriptor, graphics::Color};
 
 
 
@@ -14,6 +19,16 @@ mod mdns;
 mod core;
 pub mod dyndns2;
 
+#[cfg(feature = "display")]
+pub mod analog_clock_feature;
+
+#[cfg(feature = "mipi-dsi-display")]
+mod display_mipidsi;
+
+
+#[cfg(feature = "display")]
+mod display;
+
 
 
 pub trait Feature {
@@ -23,4 +38,17 @@ pub trait Feature {
 
 pub trait FeatureConfig {
 
+}
+
+pub fn to_rgb565(color: &Color) -> Rgb565 {
+    match color {
+        Color::Black => Rgb565::BLACK,
+        Color::Red => Rgb565::RED,
+        Color::Green => Rgb565::GREEN,
+        Color::Blue => Rgb565::BLUE,
+        Color::Yellow => Rgb565::YELLOW,
+        Color::Magenta => Rgb565::MAGENTA,
+        Color::Cyan => Rgb565::CYAN,
+        Color::White => Rgb565::WHITE,
+    }
 }

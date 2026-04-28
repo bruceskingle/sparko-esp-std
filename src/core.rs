@@ -4,10 +4,11 @@ use std::sync::mpsc::Receiver;
 
 use chrono::Local;
 use log::info;
-use sparko_embedded_std::{SparkoEmbeddedStd, config::{Config, ConfigSpec, ConfigSpecValue, TypedValue}, feature::FeatureDescriptor, task::Task, tz::TimeZone};
+use sparko_embedded_std::{config::{Config, ConfigSpec, ConfigSpecValue, TypedValue}, feature::FeatureDescriptor, platform::SparkoEmbeddedStd, task::Task, tz::TimeZone};
 
 use crate::mdns::MdnsResponder;
 use crate::{Feature, sparko_esp32_std::{SparkoEsp32Std, SparkoEsp32StdInitializer}};
+use sparko_embedded_std::platform::SparkoEmbeddedStdInitializer;
 
 
 pub const CORE_FEATURE_NAME: &str = "core";
@@ -92,8 +93,8 @@ impl Feature for Core {
 pub struct ResolveTask {
 }
 
-impl Task for ResolveTask {
-    fn run(&mut self, _sparko_cyd: &dyn SparkoEmbeddedStd) -> anyhow::Result<()> {
+impl Task<SparkoEsp32Std> for ResolveTask {
+    fn run(&mut self, _sparko_cyd: &mut SparkoEsp32Std) -> anyhow::Result<()> {
         
         log::info!("Top of loop");
 

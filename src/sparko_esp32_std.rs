@@ -5,10 +5,13 @@ use std::{net::UdpSocket, sync::{Arc, Mutex}, thread};
 
 use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::peripherals::Peripherals, http::{Method}, nvs::EspDefaultNvsPartition};
 use log::{error, info};
+use sparko_embedded_std::platform::{SparkoEmbeddedStd, SparkoEmbeddedStdInitializer};
+use sparko_embedded_std::{DisplayOrientation, InitStatus, Status};
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::config_manager::{ConfigManager, ConfigManagerBuilder};
-use sparko_embedded_std::{SparkoEmbeddedStd, problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
+use sparko_embedded_std::{problem::ProblemManager, task::{Task, TaskManager, TaskManagerBuilder}};
 use sparko_embedded_std::http_server::HttpServerManager;
+use sparko_embedded_std::graphics::DisplayManager;
 use esp_idf_svc::sntp::*;
 use chrono::{Local, Utc};
 
@@ -22,6 +25,8 @@ use crate::led::MonoLedManager;
 use crate::led::SimpleLedManager;
 #[cfg(feature = "rgb-led")]
 use crate::led::RgbLedManager;
+
+
 
 use crate::{core::Core, led::LedManager, wifi::WiFiManager};
 
@@ -82,9 +87,8 @@ fn list_nvs_keys() {
 
 // type PageHandler = Box<dyn for<'r> Fn(esp_idf_svc::http::server::Request<&mut EspHttpConnection>) -> anyhow::Result<()> + Send + 'static>;
 
-
 pub struct SparkoEsp32StdInitializer {
-    task_manager_builder: TaskManagerBuilder,
+    task_manager_builder: TaskManagerBuilder<SparkoEsp32Std>,
 }
 
 impl SparkoEsp32StdInitializer {
@@ -94,15 +98,19 @@ impl SparkoEsp32StdInitializer {
         }
     }
 
-    pub fn add_task(&mut self, task_initializer: Box<dyn Task>, schedule_spec: &str) -> anyhow::Result<()> {
-        self.task_manager_builder.add_task(task_initializer, schedule_spec)?;
-        Ok(())
-    }
-
     // pub fn build(mut self) -> anyhow::Result<SparkoEsp32Std> {
     //     self.features.shrink_to_fit();
     //     SparkoEsp32Std::new(self.features, self.task_manager_builder.build())
     // }
+}
+
+impl SparkoEmbeddedStdInitializer for SparkoEsp32StdInitializer {
+    type EmbeddedStd = SparkoEsp32Std;
+
+    fn add_task(&mut self, task_initializer: Box<dyn Task<SparkoEsp32Std>>, schedule_spec: &str) -> anyhow::Result<()> {
+        self.task_manager_builder.add_task(task_initializer, schedule_spec)?;
+        Ok(())
+    }
 }
 
 
@@ -120,6 +128,8 @@ pub struct SparkoEsp32StdBuilder {
     core_config_valid: bool,
     core_feature_config: Config,
     wifi_sender: Sender<Ipv4Addr>,
+#[cfg(feature = "display")]
+    orientation: DisplayOrientation,
 }
 
 impl SparkoEsp32StdBuilder {
@@ -166,12 +176,22 @@ impl SparkoEsp32StdBuilder {
             core_config_valid,
             core_feature_config,
             wifi_sender,
+#[cfg(feature = "display")]
+    orientation: DisplayOrientation::Rotate0,
         };
 
         // builder.internal_add_feature(Box::new(Core::new()?), true)?;
 
 
         Ok(builder)
+    }
+
+
+#[cfg(feature = "mipi-dsi-display")]
+    pub fn with_display_orientation(mut self, orientation: DisplayOrientation) -> anyhow::Result<Self> {
+        self.orientation = orientation;
+
+        Ok(self)
     }
 
     pub fn with_feature(mut self, feature: Box<dyn Feature>) -> anyhow::Result<Self> {
@@ -213,7 +233,352 @@ impl SparkoEsp32StdBuilder {
 #[cfg(feature = "board-devkitv1")]
         let led_manager = MonoLedManager::new(false,  peripherals.pins.gpio2)?;
 
-        led_manager.set_led_initializing()?;
+
+#[cfg(feature = "led")]
+        led_manager.set_status(&Status::Initializing(InitStatus::Starting))?;
+
+#[cfg(feature = "display")]
+        let mut display_manager;
+#[cfg(feature = "board-cyd")]
+{
+    use embedded_graphics::prelude::Size;
+    use esp_idf_hal::{
+        gpio::PinDriver,
+        delay::Ets,
+        spi::{SpiDeviceDriver,SpiDriverConfig, SpiConfig, Dma},
+        units::Hertz,
+    };
+        // SPI
+        let spi = SpiDeviceDriver::new_single(
+            peripherals.spi2,
+            peripherals.pins.gpio14,
+            peripherals.pins.gpio13,
+            Some(peripherals.pins.gpio12),
+            Some(peripherals.pins.gpio15),
+            &SpiDriverConfig::new().dma(Dma::Auto(4096)),
+            &SpiConfig::new()
+                .baudrate(Hertz(20_000_000))
+                ,
+        )?;
+
+        // GPIO
+        let dc = PinDriver::output(peripherals.pins.gpio2)?;
+        // let reset = PinDriver::output(peripherals.pins.gpio4)?;
+        let mut backlight: PinDriver<'static, esp_idf_hal::gpio::Output> = PinDriver::output(peripherals.pins.gpio21)?;
+
+        let mut orientation = mipidsi::options::Orientation::new().flip_horizontal();
+        
+        match self.orientation {
+            DisplayOrientation::Rotate0 => {
+            },
+            DisplayOrientation::Rotate90 => {
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg90);
+            },
+            DisplayOrientation::Rotate180 => {
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg180);
+            },
+            DisplayOrientation::Rotate270 => {
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg270);
+            },
+        };
+
+        let di = crate::display_mipidsi::EspDi { spi, dc, xoffset:  0, yoffset: 0 };
+        let mut delay = Ets;
+        let display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
+            // .reset_pin(reset)
+            .display_size(240, 320)
+            .orientation(orientation)
+            .color_order(mipidsi::options::ColorOrder::Bgr)
+            .init(&mut delay) {
+                Ok(d) => d,
+                Err(e) => anyhow::bail!("Display init error {:?}", e),
+            };
+
+        // enable backlight
+        backlight.set_high()?;
+
+        display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
+            backlight,
+            display,
+        };
+
+// use std::time::Duration;
+
+// use embedded_graphics::{
+//     pixelcolor::Rgb565,
+//     prelude::*,
+//     primitives::{Rectangle, PrimitiveStyle},
+// };
+
+//         // draw test
+//         info!("DRAW YELLOW");
+//         let d = display_manager.display();
+        
+//         Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+//             .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
+//             .draw(d)?;
+
+//         thread::sleep(Duration::from_secs(5));
+
+
+//         info!("DRAW BLUE");
+//         Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+//             .into_styled(PrimitiveStyle::with_fill(Rgb565::BLUE))
+//             .draw(&mut display_manager.display)?;
+
+//         thread::sleep(Duration::from_secs(5));
+
+
+//         info!("DRAW RED");
+//         Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+//             .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+//             .draw(&mut display_manager.display)?;
+
+//         thread::sleep(Duration::from_secs(5));
+}
+
+#[cfg(feature = "board-wave-esp32c6touch147")]
+{
+    use embedded_graphics::prelude::Size;
+    use esp_idf_hal::{
+        gpio::PinDriver,
+        delay::Ets,
+        spi::{SpiDeviceDriver,SpiDriverConfig, SpiConfig, Dma},
+        units::Hertz,
+    };
+        // // SPI
+        // let spi = SpiDeviceDriver::new_single(
+        //     peripherals.spi2,
+        //     peripherals.pins.gpio14,
+        //     peripherals.pins.gpio13,
+        //     Some(peripherals.pins.gpio12),
+        //     Some(peripherals.pins.gpio15),
+        //     &SpiDriverConfig::new().dma(Dma::Auto(4096)),
+        //     &SpiConfig::new()
+        //         .baudrate(Hertz(20_000_000))
+        //         ,
+        // )?;
+
+        // // GPIO
+        // let dc = PinDriver::output(peripherals.pins.gpio2)?;
+        // // let reset = PinDriver::output(peripherals.pins.gpio4)?;
+        // let mut backlight = PinDriver::output(peripherals.pins.gpio21)?;
+
+
+        let mut backlight = PinDriver::output(peripherals.pins.gpio23)?;
+
+
+        info!("BACKLIGHT HIGH try 2");
+        // enable backlight
+        info!("Backlight high? {}", backlight.is_set_high());
+        backlight.set_high()?;
+        info!("Backlight high? {}", backlight.is_set_high());
+        thread::sleep(Duration::from_secs(5));
+        info!("BACKLIGHT LOW try 2");
+        // enable backlight
+        backlight.set_low()?;
+        info!("Backlight high? {}", backlight.is_set_high());
+        thread::sleep(Duration::from_secs(5));
+
+        let spi = SpiDeviceDriver::new_single(
+            peripherals.spi2,
+            peripherals.pins.gpio1,   // SCLK
+            peripherals.pins.gpio2,   // MOSI
+            None::<esp_idf_hal::gpio::AnyInputPin>,                     // MISO not used
+            Some(peripherals.pins.gpio14), // CS
+            &SpiDriverConfig::new().dma(Dma::Auto(4096)),
+            &SpiConfig::new().baudrate(Hertz(40_000_000)),
+        )?;
+
+        // Control pins
+        let dc = PinDriver::output(peripherals.pins.gpio15)?;
+        let reset = PinDriver::output(peripherals.pins.gpio22)?;
+        
+
+        let mut orientation = mipidsi::options::Orientation::new();
+        let xoffset;
+        let yoffset;
+        
+        match self.orientation {
+            DisplayOrientation::Rotate0 => {
+                xoffset = 34;
+                yoffset = 0;
+            },
+            DisplayOrientation::Rotate90 => {
+                xoffset = 0;
+                yoffset = -34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg90);
+            },
+            DisplayOrientation::Rotate180 => {
+                xoffset = -34;
+                yoffset = 0;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg180);
+            },
+            DisplayOrientation::Rotate270 => {
+                xoffset = 0;
+                yoffset = 34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg270);
+            },
+        };
+
+
+
+        let mut di = crate::display_mipidsi::EspDi { spi, dc, xoffset, yoffset };
+        let mut delay = Ets;
+
+        crate::display::jd9853_init(&mut di, &mut delay)?;
+
+        let display = match mipidsi::Builder::new(mipidsi::models::ILI9341Rgb565, di)
+            .reset_pin(reset)
+            .display_size(172, 320)
+            .orientation(mipidsi::options::Orientation::new().flip_horizontal())
+            .color_order(mipidsi::options::ColorOrder::Bgr)
+            .init(&mut delay) {
+                Ok(d) => d,
+                Err(e) => anyhow::bail!("Display init error {:?}", e),
+            };
+        
+
+
+        display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
+            backlight,
+            display,
+        };
+
+use std::time::Duration;
+
+use embedded_graphics::{
+    pixelcolor::Rgb565,
+    prelude::*,
+    primitives::{Rectangle, PrimitiveStyle},
+};
+
+        // draw test
+        info!("DRAW YELLOW");
+        let d = display_manager.display();
+        
+        Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::YELLOW))
+            .draw(d)?;
+
+        thread::sleep(Duration::from_secs(5));
+
+
+        info!("DRAW BLUE");
+        Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLUE))
+            .draw(&mut display_manager.display)?;
+
+        thread::sleep(Duration::from_secs(5));
+
+        info!("BACKLIGHT LOW");
+display_manager.backlight.set_low()?;
+        thread::sleep(Duration::from_secs(5));
+
+        info!("DRAW RED");
+        Rectangle::new(Point::new(0, 0), Size::new(240, 320))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+            .draw(&mut display_manager.display)?;
+
+        thread::sleep(Duration::from_secs(5));
+}
+
+
+
+#[cfg(feature = "board-wave-esp32c6147")]
+{
+    use embedded_graphics::prelude::Size;
+    use esp_idf_hal::{
+        gpio::PinDriver,
+        delay::Ets,
+        spi::{SpiDeviceDriver,SpiDriverConfig, SpiConfig, Dma},
+        units::Hertz,
+    };
+
+
+        let mut backlight = PinDriver::output(peripherals.pins.gpio22)?;
+
+        let spi = SpiDeviceDriver::new_single(
+            peripherals.spi2,
+            peripherals.pins.gpio7,   // SCLK
+            peripherals.pins.gpio6,   // MOSI
+            None::<esp_idf_hal::gpio::AnyInputPin>,                     // MISO not used
+            Some(peripherals.pins.gpio14), // CS
+            &SpiDriverConfig::new().dma(Dma::Auto(4096)),
+            &SpiConfig::new().baudrate(Hertz(40_000_000)),
+        )?;
+
+        // Control pins
+        let dc = PinDriver::output(peripherals.pins.gpio15)?;
+        let reset = PinDriver::output(peripherals.pins.gpio21)?;
+        
+
+        let mut orientation = mipidsi::options::Orientation::new();
+        let xoffset;
+        let yoffset;
+        
+        match self.orientation {
+            DisplayOrientation::Rotate0 => {
+                xoffset = 34;
+                yoffset = 0;
+            },
+            DisplayOrientation::Rotate90 => {
+                xoffset = 0;
+                yoffset = -34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg90);
+            },
+            DisplayOrientation::Rotate180 => {
+                xoffset = -34;
+                yoffset = 0;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg180);
+            },
+            DisplayOrientation::Rotate270 => {
+                xoffset = 0;
+                yoffset = 34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg270);
+            },
+        };
+
+
+
+        let di = crate::display_mipidsi::EspDi { spi, dc, xoffset, yoffset };
+        let mut delay = Ets;
+
+        let display = match mipidsi::Builder::new(mipidsi::models::ST7789, di)
+            .reset_pin(reset)
+            .display_size(172, 320)
+            .orientation(orientation)
+            .color_order(mipidsi::options::ColorOrder::Rgb)
+            .invert_colors(mipidsi::options::ColorInversion::Inverted)
+            .init(&mut delay) {
+                Ok(d) => d,
+                Err(e) => anyhow::bail!("Display init error {:?}", e),
+            };
+        
+
+        // enable backlight
+        backlight.set_high()?;
+
+        display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
+            backlight,
+            display,
+        };
+}
+
+
+
+
+
+
+
+#[cfg(feature = "display")]
+        display_manager.set_status(&Status::Initializing(InitStatus::Starting))?;
 
         let sys_loop = EspSystemEventLoop::take()?;
         // let timer_service = EspTaskTimerService::new()?;
@@ -287,22 +652,26 @@ impl SparkoEsp32StdBuilder {
 
         // END APP CODE
 
+
         Ok(SparkoEsp32StdRunner{
             sparko_std: SparkoEsp32Std {
                 wifi_manager,
+#[cfg(feature = "led")]
                 led_manager,
                 config_manager,
                 server_manager,
                 features: self.features,
                 ap_mode: self.ap_mode,
                 core_config_valid: self.core_config_valid,
+#[cfg(feature = "display")]
+                display_manager,
             },
             initializer: self.initializer,
             core_feature_holder: FeatureHolder {
                 feature: Box::new(self.core_feature),
                 config: self.core_feature_config,
                 name: self.core_feature_name,
-            }
+            },
     })
     }
 }
@@ -340,6 +709,9 @@ pub struct SparkoEsp32Std {
     features: Vec<FeatureHolder>,
     pub ap_mode: Arc<Mutex<bool>>,
     core_config_valid: bool,
+
+#[cfg(feature = "mipi-dsi-display")]
+    pub display_manager: crate::display_mipidsi::MipiDsiDisplayManager,
 }
 
 impl SparkoEmbeddedStd for SparkoEsp32Std {
@@ -349,6 +721,15 @@ impl SparkoEmbeddedStd for SparkoEsp32Std {
 impl SparkoEsp32Std {
     pub fn builder() -> anyhow::Result<SparkoEsp32StdBuilder> {
         SparkoEsp32StdBuilder::new()
+    }
+
+    pub fn set_status(&mut self, status: Status) -> anyhow::Result<()> {
+#[cfg(feature = "led")]
+        self.led_manager.set_status(&status)?;
+#[cfg(feature = "display")]
+        self.display_manager.set_status(&status)?;
+
+        Ok(())
     }
 
     fn start_feature(&mut self, mut feature_holder: FeatureHolder, mut initializer: &mut SparkoEsp32StdInitializer) {
@@ -369,9 +750,12 @@ impl SparkoEsp32Std {
 
         // start wifi
 
+        self.set_status(Status::Initializing(InitStatus::AwaitingClientIpAddress))?;
         let ip_address = self.wifi_manager.start_client(
                 &core_feature_holder.config,
             )?;
+        
+        self.set_status(Status::Initializing(InitStatus::AwaitingTimeSync))?;
         info!("Wifi started: ip_address={}", &ip_address);
 
         let sntp = EspSntp::new_default()?;
@@ -386,12 +770,32 @@ impl SparkoEsp32Std {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
+
+        self.set_status(Status::Initializing(InitStatus::StartingFeatures))?;
+
         // self.sntp = Some(sntp); dont need this
         // std::thread::sleep(std::time::Duration::from_secs(2));
 
-        let datetime = Utc::now();
+        let datetime: chrono::DateTime<Local> = Local::now();
         info!("Time synced: {}", datetime.format("%Y-%m-%d %H:%M:%S"));
 
+        // // TEST
+
+        // use chrono::TimeZone;
+
+        // let mut clock = sparko_embedded_std::graphics::ClockRenderer::new(&mut self.display_manager)?;
+        // clock.draw(&mut self.display_manager)?;
+        // let mut t = datetime.timestamp_millis() / 1000;
+
+        // for i in 1..43200 {
+        //     t += 7;
+        //     let now: chrono::DateTime<Local> = Local.timestamp_opt(t, 0).unwrap();
+        //     clock.do_update(&mut self.display_manager, now)?;
+        // }
+
+
+
+        // // END TEST
 
         let features = std::mem::take(&mut self.features);
         self.features = Vec::with_capacity(features.len() + 1);
@@ -404,7 +808,7 @@ impl SparkoEsp32Std {
 
         let mut task_manager = initializer.task_manager_builder.build();
 
-        self.led_manager.set_led_running()?;
+        self.set_status(Status::Running)?;
 
         // This should never return
         task_manager.run(self)
@@ -418,7 +822,7 @@ impl SparkoEsp32Std {
 
             if let Err(error) = self.start_client(initializer, core_feature_holder) {
                 log::error!("Error starting client: {}", error);
-                self.led_manager.set_led_error()?;
+                self.set_status(Status::Error)?;
             }
             else {
                 log::info!("Client mode started successfully");
@@ -426,7 +830,7 @@ impl SparkoEsp32Std {
             }
         }
         else {
-            self.led_manager.set_led_admin()?;
+            self.set_status(Status::Setup)?;
             info!("Invalid config, starting AP mode");
         }
 

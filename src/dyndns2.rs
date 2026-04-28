@@ -7,12 +7,12 @@ use std::sync::Mutex;
 use esp_idf_svc::http::Method;
 use esp_idf_svc::http::client::EspHttpConnection;
 use log::info;
-use sparko_embedded_std::SparkoEmbeddedStd;
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::config::ConfigSpec;
 use sparko_embedded_std::config::ConfigSpecValue;
 use sparko_embedded_std::config::TypedValue;
 use sparko_embedded_std::task::Task;
+use sparko_embedded_std::platform::SparkoEmbeddedStdInitializer;
 
 use crate::sparko_esp32_std::SparkoEsp32Std;
 use crate::sparko_esp32_std::SparkoEsp32StdInitializer;
@@ -111,8 +111,8 @@ pub struct ResolveTask {
     cnt: u32,
 }
 
-impl Task for ResolveTask {
-    fn run(&mut self, _sparko_cyd: &dyn SparkoEmbeddedStd) -> anyhow::Result<()> {
+impl Task<SparkoEsp32Std> for ResolveTask {
+    fn run(&mut self, _sparko_cyd: &mut SparkoEsp32Std) -> anyhow::Result<()> {
         self.execute()
     }
     

@@ -260,4 +260,11 @@ impl ConfigStore for EspConfigStore {
 
             Ok(EnabledState::from(enabled))
     }
+
+    fn save_enabled_state(&self, enabled_state: EnabledState) -> anyhow::Result<()> {
+        info!("Write feature enabled value for {} to NVS: {:?}", &self.feature_name, enabled_state);
+        let value: u8 = if enabled_state.is_enabled() {1} else {0};
+        self.feature_namespace.set_u8(&self.feature_name, value)?;
+        Ok(())
+    }
 }
