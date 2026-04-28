@@ -4,9 +4,13 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use embedded_graphics::prelude::Point;
+use embedded_graphics::prelude::Size;
+use embedded_graphics::primitives::Rectangle;
 use esp_idf_svc::http::Method;
 use esp_idf_svc::http::client::EspHttpConnection;
 use log::info;
+use sparko_embedded_std::Layout;
 use sparko_embedded_std::config::Config;
 use sparko_embedded_std::config::ConfigSpec;
 use sparko_embedded_std::config::ConfigSpecValue;
@@ -32,16 +36,44 @@ use crate::{Feature, FeatureDescriptor};
 // pub const UPDATE_INTERVAL: &str =           "upd_int";
 // pub const SCHEDULE: &str =                  "schedule";
 
+pub struct AnalogClockBuilder {
+    layout: Option<Layout>,
+}
+
+impl AnalogClockBuilder {
+    pub fn new() -> Self {
+        Self {
+            layout: None,
+        }
+    }
+
+    pub fn with_layout(mut self, layout: Layout) -> Self {
+        self.layout = Some(layout);
+        self
+    }
+
+    pub fn build(self) -> anyhow::Result<AnalogClock> {
+        Ok(AnalogClock {
+            layout: self.layout.unwrap_or(|bounding_box: &Rectangle| {
+                Rectangle::new(
+                    Point::new(bounding_box.top_left.x + 1, bounding_box.top_left.y + 1),
+                    Size::new(bounding_box.size.width - 2, bounding_box.size.height - 2),
+                )
+            }),
+        })
+    }
+
+}
+
 pub struct AnalogClock {
+    layout: Layout,
 }
 
 impl AnalogClock {
 
 
-    pub fn new() -> anyhow::Result<Self> {
-        
-        Ok(Self {
-        })
+    pub fn builder() -> AnalogClockBuilder {
+        AnalogClockBuilder::new()
     }
 }
 
@@ -68,7 +100,7 @@ impl Feature for AnalogClock {
     
     fn start(&mut self, sparko: &mut SparkoEsp32Std, initializer: &mut SparkoEsp32StdInitializer, config: &Config) -> anyhow::Result<()> {
         initializer.add_task(Box::new(ResolveTask{
-            clock_renderer: ClockRenderer::new(&mut sparko.display_manager)?,
+            clock_renderer: ClockRenderer::new(&mut sparko.display_manager, self.layout)?,
         }), "* * * * * *")?;
         Ok(())
     }

@@ -1,5 +1,3 @@
-#[cfg(not(feature = "mipi-dsi-display"))]
-use std::marker::PhantomData;
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
@@ -397,7 +395,38 @@ impl SparkoEsp32StdBuilder {
         let reset = PinDriver::output(peripherals.pins.gpio22)?;
         
 
-        let mut di = crate::display_mipidsi::EspDi { spi, dc, xoffset: 34 };
+        let mut orientation = mipidsi::options::Orientation::new();
+        let xoffset;
+        let yoffset;
+        
+        match self.orientation {
+            DisplayOrientation::Rotate0 => {
+                xoffset = 34;
+                yoffset = 0;
+            },
+            DisplayOrientation::Rotate90 => {
+                xoffset = 0;
+                yoffset = -34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg90);
+            },
+            DisplayOrientation::Rotate180 => {
+                xoffset = -34;
+                yoffset = 0;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg180);
+            },
+            DisplayOrientation::Rotate270 => {
+                xoffset = 0;
+                yoffset = 34;
+            
+                orientation = orientation.rotate(mipidsi::options::Rotation::Deg270);
+            },
+        };
+
+
+
+        let mut di = crate::display_mipidsi::EspDi { spi, dc, xoffset, yoffset };
         let mut delay = Ets;
 
         crate::display::jd9853_init(&mut di, &mut delay)?;
@@ -417,7 +446,6 @@ impl SparkoEsp32StdBuilder {
         display_manager = crate::display_mipidsi::MipiDsiDisplayManager {
             backlight,
             display,
-            size: Size::new(172, 320),
         };
 
 use std::time::Duration;
@@ -624,8 +652,6 @@ display_manager.backlight.set_low()?;
 
         // END APP CODE
 
-#[cfg(not(feature = "mipi-dsi-display"))]
-        let display_manager = PhantomData;
 
         Ok(SparkoEsp32StdRunner{
             sparko_std: SparkoEsp32Std {
@@ -637,6 +663,7 @@ display_manager.backlight.set_low()?;
                 features: self.features,
                 ap_mode: self.ap_mode,
                 core_config_valid: self.core_config_valid,
+#[cfg(feature = "display")]
                 display_manager,
             },
             initializer: self.initializer,
